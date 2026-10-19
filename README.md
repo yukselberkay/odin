@@ -296,7 +296,8 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b c` | New terminal |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
 | `Ctrl-b z` / `x` | Zoom / close current pane |
-| `Ctrl-b s` / `g` | Toggle sidebar / focus Git |
+| `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
+| `Ctrl-b G` | Open the [Git pane](#git-pane); again focuses it, and when focused maximizes / restores it |
 | `Ctrl-b PageUp` / `PageDown` | Terminal scrollback |
 | `Ctrl-b b` | Send literal Ctrl-b to the terminal |
 | `Ctrl-b :` | Command prompt, including from terminal panes |
@@ -339,6 +340,33 @@ and Enter opens one. Git is
 read-only in the sidebar and refreshes periodically. Common status codes include
 `??` (untracked), `M` (modified), and `A` (added); the two columns distinguish
 index and working-tree status. Symlink directories are not recursively expanded.
+
+### Git pane
+
+The sidebar shows a short summary. For the full picture, `:git` or `Ctrl-b G` opens
+the **Git pane**, docked full-width along the bottom:
+
+- **Branches** — every local and remote branch, yours first (`●`), then by recent
+  activity, with ahead/behind counts against the upstream (`↑2 ↓1`) and their age.
+- **Commit graph** — up to 400 commits across all branches, newest first. Each lane
+  keeps its own color, so a branch reads as one line from where it forks to where it
+  merges. Refs appear as badges (`◉ main` checked out, local branches, `origin/…`
+  remotes, `◆ v1.0` tags), then the subject, author and age.
+- **Details** — the selected commit's author, date, full message and changed files.
+
+It refreshes every few seconds while you work. Press `Ctrl-b G` while it is focused
+to maximize it (same as `Ctrl-b z`) and again to put it back; set `git_pane = true`
+to have it open on every start.
+
+| Key | Action |
+| --- | --- |
+| Tab | Switch between the branch list and the commit graph |
+| Up/Down or `k`/`j`, PageUp/PageDown, `g`/`G` | Move; selecting a branch jumps to its newest commit |
+| Enter | On a branch: show only its history (again: all); on a commit: show/hide details |
+| `a` or Escape | Show all branches again |
+| `d` | Show/hide the details panel |
+| `y` | Copy the selected commit hash |
+| `r` | Refresh now |
 
 ### Editor: normal mode
 
@@ -492,7 +520,8 @@ without shell quotes. Shell commands follow your shell's normal quoting rules.
 :lsp / :lsp restart       Language server status / restart all servers
 :set rnu / :set nornu     Relative / absolute line numbers
 :run name                 Launch an explicitly configured command plugin
-:files / :git             Focus sidebar section
+:git / :git all           Git pane: open, focus, or maximize / show all branches
+:files / :git side        Focus sidebar section
 :bn / :bp                 Next / previous buffer
 :help                     Field guide
 ```
@@ -671,6 +700,7 @@ theme immediately. The configuration supports:
 | `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
 | `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
 | `show_hidden` | `true` | Show dotfiles in the explorer at startup (`.` toggles) |
+| `git_pane` | `false` | Open the Git pane (branches, commit graph, details) at startup |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |

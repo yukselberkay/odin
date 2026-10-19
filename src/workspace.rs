@@ -176,7 +176,7 @@ pub struct GitInfo {
 }
 
 // Git runs on a worker, with no shell and no repository-provided fsmonitor.
-fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+pub(crate) fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let mut child = Command::new("git")
         .arg("--no-optional-locks")
         .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-C"])

@@ -14,6 +14,9 @@ relative_numbers = false
 icons = true
 # Show dotfiles in the explorer at startup; `.` toggles them.
 show_hidden = true
+# Open the Git pane (all branches, commit graph, details) at startup; :git or
+# Ctrl-b G opens it any time.
+git_pane = false
 # Where AI panes open: "right" (side by side) or "below" (stacked).
 ai_split = "right"
 # shell = "/bin/zsh"

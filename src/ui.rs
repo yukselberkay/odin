@@ -2,6 +2,7 @@ use crate::{
     app::{App, InputKind, Mode, Pane},
     config::{color, Theme},
     editor::Buffer,
+    gitgraph::{self, Focus as GitFocus, GitView, RefKind},
     lsp::Diagnostic,
     markdown,
     workspace::printable,
@@ -179,6 +180,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     " · exited"
                 } else {
                     " · live"
+                }
+            ),
+            Some(Pane::Git(view)) => format!(
+                " {} GIT · {} ",
+                id + 1,
+                match &view.only {
+                    Some(name) => format!("{} only · a shows all", printable(name)),
+                    None => "all branches".into(),
                 }
             ),
             _ => format!(" {} AI / copilot ", id + 1),
@@ -396,6 +405,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }
             }
             Some(Pane::Ai) => ai(frame, inner, &theme, &customs),
+            Some(Pane::Git(view)) => git_view(frame, view, inner, &theme),
             None => {}
         }
     }
@@ -1081,6 +1091,411 @@ fn ai(frame: &mut Frame, area: Rect, theme: &Theme, customs: &[String]) {
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
+/// Lane colors for the commit graph: the theme's own accents, then its ANSI palette.
+fn lane_colors(theme: &Theme) -> Vec<Color> {
+    let mut colors = vec![
+        color(&theme.accent),
+        color(&theme.secondary),
+        color(&theme.warning),
+    ];
+    match &theme.ansi {
+        Some(ansi) => colors.extend([13, 14, 9, 10, 12, 11].map(|i| color(&ansi[i]))),
+        None => colors.extend([
+            Color::Rgb(0xc6, 0x78, 0xdd),
+            Color::Rgb(0x56, 0xb6, 0xc2),
+            Color::Rgb(0xe0, 0x6c, 0x75),
+            Color::Rgb(0x98, 0xc3, 0x79),
+        ]),
+    }
+    colors
+}
+
+/// Keep `selected` inside a `height`-row window that starts at `scroll`.
+fn follow(scroll: &mut usize, selected: usize, height: usize) {
+    if selected < *scroll {
+        *scroll = selected;
+    } else if height > 0 && selected >= *scroll + height {
+        *scroll = selected + 1 - height;
+    }
+}
+
+/// `ahead 2, behind 1` → `↑2 ↓1`.
+fn track(track: &str) -> String {
+    track
+        .split(", ")
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            if let Some(n) = t.strip_prefix("ahead ") {
+                format!("↑{n}")
+            } else if let Some(n) = t.strip_prefix("behind ") {
+                format!("↓{n}")
+            } else {
+                t.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Fit `spans` into `width` columns, then right-align `right` when it still fits.
+fn fit_line<'a>(spans: Vec<Span<'a>>, right: Span<'a>, width: usize, fill: Style) -> Line<'a> {
+    let mut out = Vec::new();
+    let mut used = 0;
+    let right_width = display_width(right.content.chars(), 4);
+    for span in spans {
+        let w = display_width(span.content.chars(), 4);
+        if used + w <= width {
+            used += w;
+            out.push(span);
+            continue;
+        }
+        let mut column = 0;
+        let room = width.saturating_sub(used + 1);
+        let cut = clip(&span.content, &mut column, 0, room, 4);
+        used += display_width(cut.chars(), 4) + 1;
+        out.push(Span::styled(format!("{cut}…"), span.style));
+        break;
+    }
+    if used + right_width + 2 <= width {
+        out.push(Span::styled(" ".repeat(width - used - right_width), fill));
+        out.push(right);
+    } else if used < width {
+        out.push(Span::styled(" ".repeat(width - used), fill));
+    }
+    Line::from(out)
+}
+
+fn git_view(frame: &mut Frame, view: &mut GitView, area: Rect, theme: &Theme) {
+    let fg = color(&theme.foreground);
+    let muted = color(&theme.muted);
+    let accent = color(&theme.accent);
+    let secondary = color(&theme.secondary);
+    let warning = color(&theme.warning);
+    let background = color(&theme.background);
+    let selection = color(&theme.selection);
+    if let Some(error) = &view.data.error {
+        text(frame, area, format!(" {error}"), muted);
+        return;
+    }
+    if view.data.commits.is_empty() && view.data.branches.is_empty() {
+        text(frame, area, " Reading history…", muted);
+        return;
+    }
+    let width = area.width as usize;
+
+    // Header: where you are and how it compares with upstream.
+    let mut header = vec![Span::styled(
+        " ⎇ ",
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+    )];
+    match view.current_branch() {
+        Some(branch) => {
+            header.push(Span::styled(
+                branch.name.clone(),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ));
+            if !branch.upstream.is_empty() {
+                header.push(Span::styled(
+                    format!(" → {}", branch.upstream),
+                    Style::default().fg(secondary),
+                ));
+                let state = track(&branch.track);
+                header.push(Span::styled(
+                    format!(
+                        "  {}",
+                        if state.is_empty() {
+                            "in sync".into()
+                        } else {
+                            state
+                        }
+                    ),
+                    Style::default().fg(warning),
+                ));
+            }
+        }
+        None => header.push(Span::styled(
+            format!(
+                "detached at {}",
+                &view.data.head[..view.data.head.len().min(8)]
+            ),
+            Style::default().fg(warning),
+        )),
+    }
+    let locals = view.data.branches.iter().filter(|b| !b.remote).count();
+    header.push(Span::styled(
+        format!(
+            "   {locals} local · {} remote branches · {} commits",
+            view.data.branches.len() - locals,
+            view.data.commits.len()
+        ),
+        Style::default().fg(muted),
+    ));
+    frame.render_widget(
+        Paragraph::new(fit_line(header, Span::raw(""), width, Style::default())),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+
+    let body = Rect::new(
+        area.x,
+        area.y + 1,
+        area.width,
+        area.height.saturating_sub(1),
+    );
+    let detail_height = if view.details && body.height >= 12 {
+        body.height * 2 / 5
+    } else {
+        0
+    };
+    let lists = Rect::new(body.x, body.y, body.width, body.height - detail_height);
+    let (branch_rect, commit_rect) = if body.width >= 100 {
+        let w = 34.min(body.width / 3);
+        (
+            Rect::new(lists.x, lists.y, w, lists.height),
+            Rect::new(lists.x + w + 1, lists.y, lists.width - w - 1, lists.height),
+        )
+    } else {
+        let h = (view.data.branches.len() as u16 + 1)
+            .min(lists.height / 3)
+            .max(2.min(lists.height));
+        (
+            Rect::new(lists.x, lists.y, lists.width, h),
+            Rect::new(lists.x, lists.y + h, lists.width, lists.height - h),
+        )
+    };
+
+    // Branches: yours first, then local and remote by recency.
+    if branch_rect.height > 0 {
+        let focused = view.focus == GitFocus::Branches;
+        text(
+            frame,
+            Rect::new(branch_rect.x, branch_rect.y, branch_rect.width, 1),
+            if focused {
+                " BRANCHES · Enter shows one"
+            } else {
+                " BRANCHES · Tab"
+            },
+            if focused { accent } else { muted },
+        );
+        let rows = branch_rect.height.saturating_sub(1) as usize;
+        follow(&mut view.branch_scroll, view.branch, rows);
+        for (offset, (index, branch)) in view
+            .data
+            .branches
+            .iter()
+            .enumerate()
+            .skip(view.branch_scroll)
+            .take(rows)
+            .enumerate()
+        {
+            let selected = index == view.branch;
+            let shown = view.only.as_deref() == Some(branch.name.as_str());
+            let mut style = Style::default().fg(if branch.remote { secondary } else { fg });
+            if branch.current {
+                style = style.fg(accent).add_modifier(Modifier::BOLD);
+            }
+            let fill = if selected && focused {
+                Style::default().bg(selection)
+            } else {
+                Style::default()
+            };
+            let marker = if branch.current {
+                "● "
+            } else if shown {
+                "▸ "
+            } else {
+                "  "
+            };
+            let mut spans = vec![
+                Span::styled(format!(" {marker}"), style.patch(fill)),
+                Span::styled(branch.name.clone(), style.patch(fill)),
+            ];
+            let state = track(&branch.track);
+            if !state.is_empty() {
+                spans.push(Span::styled(
+                    format!(" {state}"),
+                    Style::default().fg(warning).patch(fill),
+                ));
+            }
+            let right = Span::styled(
+                format!("{} ", gitgraph::age(branch.time)),
+                Style::default().fg(muted).patch(fill),
+            );
+            frame.render_widget(
+                Paragraph::new(fit_line(spans, right, branch_rect.width as usize, fill)),
+                Rect::new(
+                    branch_rect.x,
+                    branch_rect.y + 1 + offset as u16,
+                    branch_rect.width,
+                    1,
+                ),
+            );
+        }
+    }
+
+    // Commit graph: one color per lane, refs as badges, author and age on the right.
+    let rows = commit_rect.height as usize;
+    view.height = rows;
+    follow(&mut view.scroll, view.commit, rows);
+    let lanes = lane_colors(theme);
+    let graph_width = view
+        .data
+        .graph
+        .iter()
+        .skip(view.scroll)
+        .take(rows)
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0)
+        .min((commit_rect.width as usize / 3).max(8));
+    for (offset, (index, commit)) in view
+        .data
+        .commits
+        .iter()
+        .enumerate()
+        .skip(view.scroll)
+        .take(rows)
+        .enumerate()
+    {
+        let selected = index == view.commit;
+        let fill = if selected {
+            Style::default().bg(selection)
+        } else {
+            Style::default()
+        };
+        let head = commit.hash == view.data.head;
+        let mut spans = vec![Span::styled(" ", fill)];
+        let cells = view.data.graph.get(index).map(Vec::as_slice).unwrap_or(&[]);
+        for (column, (glyph, lane)) in cells.iter().enumerate().take(graph_width) {
+            let glyph = if *glyph == '●' && head {
+                '◉'
+            } else {
+                *glyph
+            };
+            let glyph = if column + 1 == graph_width && cells.len() > graph_width {
+                '…'
+            } else {
+                glyph
+            };
+            let mut style = Style::default().fg(lanes[lane % lanes.len()]).patch(fill);
+            if glyph == '◉' || glyph == '●' {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(glyph.to_string(), style));
+        }
+        spans.push(Span::styled(
+            " ".repeat(graph_width.saturating_sub(cells.len()) + 1),
+            fill,
+        ));
+        spans.push(Span::styled(
+            format!("{} ", commit.short),
+            Style::default().fg(muted).patch(fill),
+        ));
+        for r in &commit.refs {
+            let (label, style) = match r.kind {
+                RefKind::Head => (
+                    format!(" ◉ {} ", r.name),
+                    Style::default()
+                        .fg(background)
+                        .bg(accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                RefKind::Local => (
+                    format!(" {} ", r.name),
+                    Style::default()
+                        .fg(background)
+                        .bg(secondary)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                RefKind::Remote => (r.name.clone(), Style::default().fg(secondary).patch(fill)),
+                RefKind::Tag => (
+                    format!("◆ {}", r.name),
+                    Style::default()
+                        .fg(warning)
+                        .add_modifier(Modifier::BOLD)
+                        .patch(fill),
+                ),
+            };
+            spans.push(Span::styled(label, style));
+            spans.push(Span::styled(" ", fill));
+        }
+        let mut subject = Style::default().fg(fg).patch(fill);
+        if head {
+            subject = subject.add_modifier(Modifier::BOLD);
+        }
+        spans.push(Span::styled(commit.subject.clone(), subject));
+        let right = Span::styled(
+            format!("{} · {} ", commit.author, gitgraph::age(commit.time)),
+            Style::default().fg(muted).patch(fill),
+        );
+        frame.render_widget(
+            Paragraph::new(fit_line(spans, right, commit_rect.width as usize, fill)),
+            Rect::new(
+                commit_rect.x,
+                commit_rect.y + offset as u16,
+                commit_rect.width,
+                1,
+            ),
+        );
+    }
+
+    // Details of the selected commit: full message, author, date and changed files.
+    if detail_height > 1 {
+        let rect = Rect::new(
+            body.x,
+            body.bottom() - detail_height,
+            body.width,
+            detail_height,
+        );
+        let title = match view.selected() {
+            Some(c) => format!("── {} {}", c.short, "─".repeat(width)),
+            None => "─".repeat(width),
+        };
+        text(
+            frame,
+            Rect::new(rect.x, rect.y, rect.width, 1),
+            title,
+            color(&theme.border),
+        );
+        let lines: Vec<Line> = match (&view.detail, view.selected()) {
+            (Some((hash, lines)), Some(c)) if *hash == c.hash => lines
+                .iter()
+                .map(|line| {
+                    if let Some((who, when)) = line.split_once('\u{1f}') {
+                        Line::from(vec![
+                            Span::styled(format!(" {who}"), Style::default().fg(secondary)),
+                            Span::styled(format!("  {when}"), Style::default().fg(muted)),
+                        ])
+                    } else if let Some((file, bar)) = line.split_once(" | ") {
+                        let mut spans = vec![Span::styled(
+                            format!(" {file} | "),
+                            Style::default().fg(muted),
+                        )];
+                        for ch in bar.chars() {
+                            let tint = match ch {
+                                '+' => accent,
+                                '-' => warning,
+                                _ => muted,
+                            };
+                            spans.push(Span::styled(ch.to_string(), Style::default().fg(tint)));
+                        }
+                        Line::from(spans)
+                    } else if line.contains(" changed") && line.starts_with(' ') {
+                        Line::styled(format!(" {line}"), Style::default().fg(muted))
+                    } else {
+                        Line::styled(format!(" {line}"), Style::default().fg(fg))
+                    }
+                })
+                .collect(),
+            (_, Some(_)) => vec![Line::styled(" Loading…", Style::default().fg(muted))],
+            _ => Vec::new(),
+        };
+        frame.render_widget(
+            Paragraph::new(lines),
+            Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1),
+        );
+    }
+}
+
 fn footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let mode = if app.prefix {
@@ -1096,6 +1511,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
             Some(Pane::Terminal(_)) => "TERMINAL",
             Some(Pane::Preview(_)) => "PREVIEW",
             Some(Pane::Ai) => "AI",
+            Some(Pane::Git(_)) => "GIT",
             _ => match app.mode {
                 Mode::Insert => "INSERT",
                 Mode::Visual => "VISUAL",
@@ -1149,6 +1565,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         let hints = if app.prefix {
             " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  x close  ? help"
+        } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(_))) && !app.sidebar_focus {
+            " Tab branches/commits   j k move   Enter show branch / details   a all   y copy hash   r refresh   ^B G maximize"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Preview(_)))
             && !app.sidebar_focus
         {
@@ -1231,6 +1649,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             "Ctrl-b g / PgUp / PgDn",
             "Git sidebar / terminal scrollback",
+        ),
+        (
+            ":git  or  Ctrl-b G",
+            "Git pane: branches, graph, details; again maximizes",
         ),
         ("Ctrl-b b", "Send literal Ctrl-b to a terminal"),
         (

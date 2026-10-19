@@ -1,0 +1,629 @@
+//! The Git pane: every branch with its upstream state, a commit graph with one color
+//! per lane, and the selected commit's full message and changed files. Git runs on
+//! worker threads, like the sidebar's status, so a slow repository never blocks keys.
+use crate::workspace::{git, printable};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::mpsc::{self, Receiver},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+/// Commits loaded into the graph; older history is a `git log` away.
+const LIMIT: usize = 400;
+const REFRESH: Duration = Duration::from_secs(4);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefKind {
+    /// The checked-out branch (or a detached `HEAD`).
+    Head,
+    Local,
+    Remote,
+    Tag,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ref {
+    pub name: String,
+    pub kind: RefKind,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Commit {
+    pub hash: String,
+    pub short: String,
+    pub parents: Vec<String>,
+    pub refs: Vec<Ref>,
+    pub author: String,
+    pub time: i64,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Branch {
+    pub name: String,
+    pub remote: bool,
+    pub current: bool,
+    pub hash: String,
+    pub upstream: String,
+    /// `ahead 2, behind 1`, `gone`, or empty when in sync / without upstream.
+    pub track: String,
+    pub time: i64,
+}
+
+/// One graph cell: a box-drawing glyph and the index of its lane's color.
+pub type Cell = (char, usize);
+
+#[derive(Default)]
+pub struct Snapshot {
+    pub branches: Vec<Branch>,
+    pub commits: Vec<Commit>,
+    pub graph: Vec<Vec<Cell>>,
+    pub head: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Branches,
+    Commits,
+}
+
+pub struct GitView {
+    root: PathBuf,
+    pub data: Snapshot,
+    pub focus: Focus,
+    pub branch: usize,
+    pub commit: usize,
+    /// First visible commit / branch row, kept in view of the selection at draw time.
+    pub scroll: usize,
+    pub branch_scroll: usize,
+    /// Visible commit rows, recorded at draw time for paging.
+    pub height: usize,
+    /// Show only this branch's history instead of every branch.
+    pub only: Option<String>,
+    pub details: bool,
+    /// Full message and changed files of the selected commit: (hash, lines).
+    pub detail: Option<(String, Vec<String>)>,
+    receiver: Option<Receiver<Snapshot>>,
+    detail_receiver: Option<Receiver<(String, Vec<String>)>>,
+    last: Instant,
+}
+
+impl GitView {
+    pub fn new(root: PathBuf) -> Self {
+        let mut view = Self {
+            root,
+            data: Snapshot::default(),
+            focus: Focus::Commits,
+            branch: 0,
+            commit: 0,
+            scroll: 0,
+            branch_scroll: 0,
+            height: 20,
+            only: None,
+            details: true,
+            detail: None,
+            receiver: None,
+            detail_receiver: None,
+            last: Instant::now(),
+        };
+        view.refresh();
+        view
+    }
+
+    pub fn refresh(&mut self) {
+        self.receiver = Some(load(self.root.clone(), self.only.clone()));
+        self.last = Instant::now();
+    }
+
+    /// Take finished loads and start due ones; true when the view changed.
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
+        if let Some(receiver) = &self.receiver {
+            match receiver.try_recv() {
+                Ok(snapshot) => {
+                    self.receiver = None;
+                    self.replace(snapshot);
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => self.receiver = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        } else if self.last.elapsed() >= REFRESH {
+            self.refresh();
+        }
+        if let Some(receiver) = &self.detail_receiver {
+            match receiver.try_recv() {
+                Ok(detail) => {
+                    self.detail_receiver = None;
+                    self.detail = Some(detail);
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => self.detail_receiver = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if self.details && self.detail_receiver.is_none() {
+            if let Some(commit) = self.selected() {
+                if self
+                    .detail
+                    .as_ref()
+                    .is_none_or(|(hash, _)| hash != &commit.hash)
+                {
+                    self.detail_receiver =
+                        Some(load_detail(self.root.clone(), commit.hash.clone()));
+                }
+            }
+        }
+        changed
+    }
+
+    /// Swap in fresh data, keeping the same commit and branch selected.
+    fn replace(&mut self, snapshot: Snapshot) {
+        let commit = self.selected().map(|c| c.hash.clone());
+        let branch = self.data.branches.get(self.branch).map(|b| b.name.clone());
+        self.data = snapshot;
+        if let Some(i) = commit.and_then(|h| self.data.commits.iter().position(|c| c.hash == h)) {
+            self.commit = i;
+        }
+        if let Some(i) = branch.and_then(|n| self.data.branches.iter().position(|b| b.name == n)) {
+            self.branch = i;
+        }
+        self.commit = self.commit.min(self.data.commits.len().saturating_sub(1));
+        self.branch = self.branch.min(self.data.branches.len().saturating_sub(1));
+    }
+
+    pub fn selected(&self) -> Option<&Commit> {
+        self.data.commits.get(self.commit)
+    }
+
+    pub fn current_branch(&self) -> Option<&Branch> {
+        self.data.branches.iter().find(|b| b.current)
+    }
+
+    /// Move the focused list by `delta` rows; a branch selection jumps the graph to
+    /// that branch's newest commit.
+    pub fn step(&mut self, delta: isize) {
+        match self.focus {
+            Focus::Commits => {
+                let last = self.data.commits.len().saturating_sub(1);
+                self.commit = self.commit.saturating_add_signed(delta).min(last);
+            }
+            Focus::Branches => {
+                let last = self.data.branches.len().saturating_sub(1);
+                self.branch = self.branch.saturating_add_signed(delta).min(last);
+                self.jump_to_branch();
+            }
+        }
+    }
+
+    fn jump_to_branch(&mut self) {
+        if let Some(branch) = self.data.branches.get(self.branch) {
+            if let Some(i) = self.data.commits.iter().position(|c| c.hash == branch.hash) {
+                self.commit = i;
+            }
+        }
+    }
+
+    /// Show only the selected branch's history, or every branch again.
+    pub fn toggle_only(&mut self) {
+        let name = self.data.branches.get(self.branch).map(|b| b.name.clone());
+        self.only = if self.only == name { None } else { name };
+        self.refresh();
+    }
+
+    pub fn show_all(&mut self) {
+        if self.only.take().is_some() {
+            self.refresh();
+        }
+    }
+}
+
+fn load(root: PathBuf, only: Option<String>) -> Receiver<Snapshot> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(snapshot(&root, only.as_deref()));
+    });
+    receiver
+}
+
+fn snapshot(root: &std::path::Path, only: Option<&str>) -> Snapshot {
+    let text = |args: &[&str]| git(root, args).map(|b| String::from_utf8_lossy(&b).into_owned());
+    let Some(head) = text(&["rev-parse", "--verify", "--quiet", "HEAD"]) else {
+        let error = if text(&["rev-parse", "--git-dir"]).is_some() {
+            "No commits yet"
+        } else {
+            "Not a Git repository"
+        };
+        return Snapshot {
+            error: Some(error.into()),
+            ..Snapshot::default()
+        };
+    };
+    let branches = text(&[
+        "for-each-ref",
+        "--format=%(HEAD)%1f%(refname)%1f%(refname:short)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:unix)",
+        "refs/heads",
+        "refs/remotes",
+    ])
+    .map(|t| parse_branches(&t))
+    .unwrap_or_default();
+    let remotes: HashSet<&str> = branches
+        .iter()
+        .filter(|b| b.remote)
+        .map(|b| b.name.as_str())
+        .collect();
+    let limit = format!("-{LIMIT}");
+    let mut args = vec![
+        "log",
+        "--topo-order",
+        "--no-color",
+        "--format=%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%at%x1f%s",
+        limit.as_str(),
+    ];
+    match only {
+        Some(name) => args.extend(["--end-of-options", name]),
+        None => args.extend(["--branches", "--remotes", "--tags", "HEAD"]),
+    }
+    let Some(log) = text(&args) else {
+        return Snapshot {
+            branches,
+            head: head.trim().into(),
+            error: Some("git log failed or timed out".into()),
+            ..Snapshot::default()
+        };
+    };
+    let commits = parse_log(&log, &remotes);
+    let graph = layout(&commits);
+    Snapshot {
+        branches,
+        commits,
+        graph,
+        head: head.trim().into(),
+        error: None,
+    }
+}
+
+fn load_detail(root: PathBuf, hash: String) -> Receiver<(String, Vec<String>)> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let lines = git(
+            &root,
+            &[
+                "show",
+                "--no-color",
+                "--stat=200",
+                "--date=format:%Y-%m-%d %H:%M",
+                "--format=%an <%ae>%x1f%ad%n%n%B",
+                &hash,
+            ],
+        )
+        .map(|bytes| {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                // Keep the author/date separator; sanitize each side.
+                .map(|l| {
+                    l.trim_end()
+                        .split('\u{1f}')
+                        .map(printable)
+                        .collect::<Vec<_>>()
+                        .join("\u{1f}")
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| vec!["Could not read this commit".into()]);
+        let _ = sender.send((hash, lines));
+    });
+    receiver
+}
+
+fn parse_branches(text: &str) -> Vec<Branch> {
+    let mut branches: Vec<Branch> = text
+        .lines()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.split('\u{1f}').collect();
+            let [head, full, name, hash, upstream, track, time] = f[..] else {
+                return None;
+            };
+            // `origin/HEAD` only points at another remote branch.
+            if full.starts_with("refs/remotes/") && full.ends_with("/HEAD") {
+                return None;
+            }
+            Some(Branch {
+                name: printable(name),
+                remote: full.starts_with("refs/remotes/"),
+                current: head == "*",
+                hash: hash.into(),
+                upstream: printable(upstream),
+                track: printable(track),
+                time: time.parse().unwrap_or(0),
+            })
+        })
+        .collect();
+    // Yours first: the checked-out branch, then local and remote branches by recency.
+    branches.sort_by_key(|b| (!b.current, b.remote, -b.time));
+    branches
+}
+
+fn parse_log(text: &str, remotes: &HashSet<&str>) -> Vec<Commit> {
+    text.lines()
+        .filter_map(|line| {
+            let f: Vec<&str> = line.splitn(7, '\u{1f}').collect();
+            let [hash, short, parents, refs, author, time, subject] = f[..] else {
+                return None;
+            };
+            Some(Commit {
+                hash: hash.into(),
+                short: short.into(),
+                parents: parents.split_whitespace().map(String::from).collect(),
+                refs: parse_refs(refs, remotes),
+                author: printable(author),
+                time: time.parse().unwrap_or(0),
+                subject: printable(subject),
+            })
+        })
+        .collect()
+}
+
+/// `%D` decorations: "HEAD -> main, origin/main, tag: v1.0".
+fn parse_refs(text: &str, remotes: &HashSet<&str>) -> Vec<Ref> {
+    text.split(", ")
+        .filter(|r| !r.is_empty())
+        .map(|r| {
+            let (name, kind) = if let Some(branch) = r.strip_prefix("HEAD -> ") {
+                (branch, RefKind::Head)
+            } else if let Some(tag) = r.strip_prefix("tag: ") {
+                (tag, RefKind::Tag)
+            } else if r == "HEAD" {
+                (r, RefKind::Head)
+            } else if remotes.contains(r) {
+                (r, RefKind::Remote)
+            } else {
+                (r, RefKind::Local)
+            };
+            Ref {
+                name: printable(name),
+                kind,
+            }
+        })
+        .collect()
+}
+
+/// Lay out the commit graph, newest first, two columns per lane: the lane's glyph
+/// and a connector column. Each lane keeps one color from where it starts until it
+/// ends, so a branch reads as one colored line through the history.
+pub fn layout(commits: &[Commit]) -> Vec<Vec<Cell>> {
+    // What each lane waits for: (the commit it continues to, its color).
+    let mut lanes: Vec<Option<(&str, usize)>> = Vec::new();
+    let mut colors = 0..;
+    let mut rows = Vec::with_capacity(commits.len());
+    for commit in commits {
+        let before: Vec<bool> = lanes.iter().map(Option::is_some).collect();
+        let waiting: Vec<usize> = (0..lanes.len())
+            .filter(|&i| lanes[i].is_some_and(|(h, _)| h == commit.hash))
+            .collect();
+        let col = match waiting.first() {
+            Some(&i) => i,
+            None => {
+                let color = colors.next().unwrap_or(0);
+                place(&mut lanes, (&commit.hash, color), None)
+            }
+        };
+        let color = lanes[col].map_or(0, |(_, c)| c);
+        // Other children's lanes end here: they branched off from this commit.
+        let joins: Vec<(usize, usize)> = waiting[waiting.len().min(1)..]
+            .iter()
+            .map(|&i| (i, lanes[i].map_or(0, |(_, c)| c)))
+            .collect();
+        for &(i, _) in &joins {
+            lanes[i] = None;
+        }
+        lanes[col] = commit.parents.first().map(|p| (p.as_str(), color));
+        // Merge parents: join a lane already waiting for them, or start a new one.
+        let mut forks = Vec::new();
+        for parent in commit.parents.iter().skip(1) {
+            match lanes
+                .iter()
+                .position(|l| l.is_some_and(|(h, _)| h == parent))
+            {
+                Some(i) => forks.push((i, lanes[i].map_or(0, |(_, c)| c), true)),
+                None => {
+                    let color = colors.next().unwrap_or(0);
+                    let i = place(&mut lanes, (parent, color), Some(col));
+                    forks.push((i, color, false));
+                }
+            }
+        }
+        let width = lanes.len().max(before.len());
+        let mut row = vec![(' ', 0); width * 2];
+        for (i, lane) in lanes.iter().enumerate() {
+            if i != col && before.get(i).copied().unwrap_or(false) {
+                if let Some((_, c)) = lane {
+                    row[i * 2] = ('│', *c);
+                }
+            }
+        }
+        for &(i, c) in &joins {
+            connect(&mut row, col, i, c);
+            row[i * 2] = ('╯', c);
+        }
+        for &(i, c, existing) in &forks {
+            connect(&mut row, col, i, c);
+            row[i * 2] = match (existing, i > col) {
+                (true, true) => ('┤', c),
+                (true, false) => ('├', c),
+                (false, true) => ('╮', c),
+                (false, false) => ('╭', c),
+            };
+        }
+        row[col * 2] = ('●', color);
+        while row.len() > 2 && row[row.len() - 2..].iter().all(|(g, _)| *g == ' ') {
+            row.truncate(row.len() - 2);
+        }
+        rows.push(row);
+        while lanes.last().is_some_and(Option::is_none) {
+            lanes.pop();
+        }
+    }
+    rows
+}
+
+/// Put `value` in the first free lane (never `skip`), or a new lane on the right.
+fn place<'a>(
+    lanes: &mut Vec<Option<(&'a str, usize)>>,
+    value: (&'a str, usize),
+    skip: Option<usize>,
+) -> usize {
+    match (0..lanes.len()).find(|&i| lanes[i].is_none() && Some(i) != skip) {
+        Some(i) => {
+            lanes[i] = Some(value);
+            i
+        }
+        None => {
+            lanes.push(Some(value));
+            lanes.len() - 1
+        }
+    }
+}
+
+/// Horizontal line between lanes `a` and `b`, crossing any lane in between.
+fn connect(row: &mut [Cell], a: usize, b: usize, color: usize) {
+    let (from, to) = (a.min(b) * 2 + 1, a.max(b) * 2);
+    for cell in &mut row[from..to] {
+        cell.0 = if cell.0 == '│' { '┼' } else { '─' };
+        if cell.0 == '─' {
+            cell.1 = color;
+        }
+    }
+}
+
+/// Compact age of a Unix timestamp: "now", "5m", "3h", "2d", "6w", "4mo", "2y".
+pub fn age(time: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    age_at(now, time)
+}
+
+fn age_at(now: i64, time: i64) -> String {
+    let seconds = (now - time).max(0);
+    match seconds {
+        s if s < 60 => "now".into(),
+        s if s < 3_600 => format!("{}m", s / 60),
+        s if s < 86_400 => format!("{}h", s / 3_600),
+        s if s < 14 * 86_400 => format!("{}d", s / 86_400),
+        s if s < 60 * 86_400 => format!("{}w", s / (7 * 86_400)),
+        s if s < 365 * 86_400 => format!("{}mo", s / (30 * 86_400)),
+        s => format!("{}y", s / (365 * 86_400)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit(hash: &str, parents: &[&str]) -> Commit {
+        Commit {
+            hash: hash.into(),
+            parents: parents.iter().map(|p| p.to_string()).collect(),
+            ..Commit::default()
+        }
+    }
+
+    fn draw(commits: &[Commit]) -> Vec<String> {
+        layout(commits)
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|(g, _)| g)
+                    .collect::<String>()
+                    .trim_end()
+                    .into()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn linear_history_is_one_lane() {
+        let commits = [commit("c", &["b"]), commit("b", &["a"]), commit("a", &[])];
+        assert_eq!(draw(&commits), ["●", "●", "●"]);
+        let colors: HashSet<usize> = layout(&commits).iter().map(|r| r[0].1).collect();
+        assert_eq!(colors.len(), 1);
+    }
+
+    #[test]
+    fn a_merged_branch_forks_and_joins_in_its_own_color() {
+        // m merges feature (f2, f1) into main (b); both started from a.
+        let commits = [
+            commit("m", &["b", "f2"]),
+            commit("f2", &["f1"]),
+            commit("b", &["a"]),
+            commit("f1", &["a"]),
+            commit("a", &[]),
+        ];
+        assert_eq!(draw(&commits), ["●─╮", "│ ●", "● │", "│ ●", "●─╯"]);
+        let graph = layout(&commits);
+        assert_ne!(
+            graph[0][0].1, graph[0][2].1,
+            "branch lane has its own color"
+        );
+        assert_eq!(graph[1][2].1, graph[0][2].1, "lane keeps its color");
+    }
+
+    #[test]
+    fn unmerged_branch_tips_get_their_own_lane() {
+        let commits = [
+            commit("main2", &["base"]),
+            commit("topic", &["base"]),
+            commit("base", &[]),
+        ];
+        assert_eq!(draw(&commits), ["●", "│ ●", "●─╯"]);
+    }
+
+    #[test]
+    fn crossing_a_lane_draws_a_crossing() {
+        let commits = [
+            commit("x", &["a"]),
+            commit("y", &["b"]),
+            commit("m", &["c", "a"]),
+        ];
+        // m sits in lane 2 and merges toward lane 0, crossing lane 1.
+        assert_eq!(draw(&commits)[2], "├─┼─●");
+    }
+
+    #[test]
+    fn decorations_and_branches_parse() {
+        let remotes: HashSet<&str> = ["origin/main"].into();
+        let refs = parse_refs("HEAD -> main, origin/main, tag: v1.0, topic", &remotes);
+        let kinds: Vec<_> = refs.iter().map(|r| (r.name.as_str(), r.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                ("main", RefKind::Head),
+                ("origin/main", RefKind::Remote),
+                ("v1.0", RefKind::Tag),
+                ("topic", RefKind::Local),
+            ]
+        );
+        let text = [
+            " \u{1f}refs/heads/old\u{1f}old\u{1f}1\u{1f}\u{1f}\u{1f}100",
+            "*\u{1f}refs/heads/main\u{1f}main\u{1f}2\u{1f}origin/main\u{1f}ahead 2\u{1f}50",
+            " \u{1f}refs/remotes/origin/HEAD\u{1f}origin\u{1f}2\u{1f}\u{1f}\u{1f}50",
+            " \u{1f}refs/remotes/origin/main\u{1f}origin/main\u{1f}3\u{1f}\u{1f}\u{1f}300",
+            " \u{1f}refs/heads/new\u{1f}new\u{1f}4\u{1f}\u{1f}\u{1f}200",
+        ]
+        .join("\n");
+        let names: Vec<_> = parse_branches(&text).into_iter().map(|b| b.name).collect();
+        assert_eq!(names, ["main", "new", "old", "origin/main"]);
+    }
+
+    #[test]
+    fn ages_are_compact() {
+        assert_eq!(age_at(1_000, 990), "now");
+        assert_eq!(age_at(10_000, 10_000 - 7_200), "2h");
+        assert_eq!(age_at(100 * 86_400, 97 * 86_400), "3d");
+        assert_eq!(age_at(800 * 86_400, 0), "2y");
+    }
+}

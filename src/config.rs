@@ -116,6 +116,8 @@ pub struct Config {
     pub icons: Icons,
     /// Show dotfiles (`.github`, `.gitignore`, …) in the explorer.
     pub show_hidden: bool,
+    /// Open the Git pane (branches and commit graph) at startup.
+    pub git_pane: bool,
     /// Where new AI panes open: "right" (side by side) or "below" (stacked).
     pub ai_split: String,
     /// Your own AI launchers: `[ai.<name>] program = "…" args = […] env = {…}`.
@@ -139,6 +141,7 @@ impl Default for Config {
             relative_numbers: false,
             icons: Icons::Auto,
             show_hidden: true,
+            git_pane: false,
             ai_split: "right".into(),
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),

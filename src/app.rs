@@ -2,6 +2,7 @@ use crate::{
     clipboard::Clipboard,
     config::{self, Config, Theme},
     editor::Buffer,
+    gitgraph::{self, GitView},
     highlight::Syntax,
     layout::{Axis, Tile},
     lsp::{self, Lsp},
@@ -24,6 +25,8 @@ pub enum Pane {
     Preview(Preview),
     Terminal(TerminalPane),
     Ai,
+    /// Branches, commit graph and commit details (`:git`, Ctrl-b G).
+    Git(Box<GitView>),
 }
 
 /// Rendered, read-only Markdown view of a buffer.
@@ -244,6 +247,11 @@ impl App {
             app.open_terminal(None, Some(Axis::Vertical))?;
             app.focused = 0;
             app.message = "All systems in view.  Code · shell · AI · Git".into();
+        }
+        if app.config.git_pane {
+            let focused = app.focused;
+            app.git_pane()?;
+            app.focused = focused;
         }
         if let Some(error) = theme_error {
             app.fail(format!("Theme failed, using phosphor: {error}"));
@@ -500,8 +508,10 @@ impl App {
             self.lsp_event(event);
         }
         for pane in self.panes.values_mut() {
-            if let Pane::Terminal(terminal) = pane {
-                self.redraw |= terminal.poll();
+            match pane {
+                Pane::Terminal(terminal) => self.redraw |= terminal.poll(),
+                Pane::Git(view) => self.redraw |= view.poll(),
+                _ => {}
             }
         }
         if let Some(receiver) = &self.git_receiver {
@@ -669,6 +679,7 @@ impl App {
         match self.panes.get_mut(&self.focused) {
             Some(Pane::Terminal(terminal)) => return terminal.key(key),
             Some(Pane::Preview(_)) => return self.preview_key(key),
+            Some(Pane::Git(_)) => return self.git_pane_key(key),
             Some(Pane::Ai) => {
                 let chosen = match key.code {
                     KeyCode::Char('c') => Some("codex"),
@@ -926,6 +937,7 @@ impl App {
                 self.sidebar_focus = true;
                 self.git_focus = true;
             }
+            KeyCode::Char('G') => self.git_pane()?,
             KeyCode::Char('z') => {
                 self.zoom = !self.zoom;
                 self.sidebar_focus = false;
@@ -1592,6 +1604,87 @@ impl App {
         self.notice("Live preview: it follows your cursor as you edit");
         Ok(())
     }
+    /// Open the Git pane docked full-width along the bottom; when it is open, focus
+    /// it, and when it is already focused, maximize or restore it.
+    fn git_pane(&mut self) -> Result<()> {
+        let existing = self
+            .panes
+            .iter()
+            .find(|(_, p)| matches!(p, Pane::Git(_)))
+            .map(|(id, _)| *id);
+        match existing {
+            Some(id) if id == self.focused && !self.sidebar_focus => {
+                self.zoom = !self.zoom;
+            }
+            Some(id) => {
+                self.focused = id;
+                self.sidebar_focus = false;
+                self.zoom = false;
+            }
+            None => {
+                if self.panes.len() >= 12 {
+                    bail!("Maximum of 12 panes");
+                }
+                let id = self.next_pane;
+                self.next_pane += 1;
+                self.panes
+                    .insert(id, Pane::Git(Box::new(GitView::new(self.root.clone()))));
+                let above = std::mem::replace(&mut self.tiles, Tile::Leaf(id));
+                self.tiles = Tile::Split {
+                    axis: Axis::Vertical,
+                    percent: 60,
+                    first: Box::new(above),
+                    second: Box::new(Tile::Leaf(id)),
+                };
+                self.focused = id;
+                self.sidebar_focus = false;
+                self.zoom = false;
+                self.notice("Git: Tab branches/commits · Enter show branch · Ctrl-b G maximize");
+            }
+        }
+        self.mode = Mode::Normal;
+        Ok(())
+    }
+    fn git_pane_key(&mut self, key: KeyEvent) -> Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let Some(Pane::Git(view)) = self.panes.get_mut(&self.focused) else {
+            return Ok(());
+        };
+        let page = view.height.max(2) as isize;
+        match key.code {
+            KeyCode::Char('d') if ctrl => view.step(page / 2),
+            KeyCode::Char('u') if ctrl => view.step(-page / 2),
+            _ if ctrl => {}
+            KeyCode::Tab | KeyCode::BackTab => {
+                view.focus = match view.focus {
+                    gitgraph::Focus::Commits => gitgraph::Focus::Branches,
+                    gitgraph::Focus::Branches => gitgraph::Focus::Commits,
+                };
+            }
+            KeyCode::Char('j') | KeyCode::Down => view.step(1),
+            KeyCode::Char('k') | KeyCode::Up => view.step(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => view.step(page - 1),
+            KeyCode::PageUp => view.step(1 - page),
+            KeyCode::Char('g') | KeyCode::Home => view.step(isize::MIN / 2),
+            KeyCode::Char('G') | KeyCode::End => view.step(isize::MAX / 2),
+            KeyCode::Enter => match view.focus {
+                gitgraph::Focus::Branches => view.toggle_only(),
+                gitgraph::Focus::Commits => view.details = !view.details,
+            },
+            KeyCode::Char('d') => view.details = !view.details,
+            KeyCode::Char('a') | KeyCode::Esc => view.show_all(),
+            KeyCode::Char('r') => view.refresh(),
+            KeyCode::Char('y') => {
+                if let Some(hash) = view.selected().map(|c| c.hash.clone()) {
+                    self.clipboard.copy(hash.clone(), false);
+                    self.notice(format!("Copied {hash}"));
+                }
+            }
+            KeyCode::Char(':') => self.input_start(InputKind::Command),
+            _ => {}
+        }
+        Ok(())
+    }
     fn preview_key(&mut self, key: KeyEvent) -> Result<()> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let Some(Pane::Preview(p)) = self.panes.get_mut(&self.focused) else {
@@ -1981,6 +2074,21 @@ impl App {
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
             "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            "git" | "graph" => match arg {
+                "" => self.git_pane()?,
+                "all" => {
+                    self.git_pane()?;
+                    if let Some(Pane::Git(view)) = self.panes.get_mut(&self.focused) {
+                        view.show_all();
+                    }
+                }
+                "side" | "sidebar" => {
+                    self.sidebar_visible = true;
+                    self.sidebar_focus = true;
+                    self.git_focus = true;
+                }
+                _ => bail!("Use :git (open / focus / zoom the Git pane), :git all or :git side"),
+            },
             // :ai [codex|claude|gemini|agy|local|<[ai.name]>] [model] [right|below]
             "ai" => {
                 let mut program = None;
@@ -2037,11 +2145,6 @@ impl App {
                 self.sidebar_visible = true;
                 self.sidebar_focus = true;
                 self.git_focus = false;
-            }
-            "git" => {
-                self.sidebar_visible = true;
-                self.sidebar_focus = true;
-                self.git_focus = true;
             }
             "help" | "h" => self.toggle_help(),
             "bn" => self.next_buffer(false),
@@ -2579,5 +2682,126 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         }
         assert!(app.command("theme ../../bad").is_err());
         assert_eq!(app.config.theme, "github-dark");
+    }
+    #[test]
+    fn git_pane_shows_every_branch_and_maximizes() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args(["-c", "user.name=Ada", "-c", "user.email=ada@example.com"])
+                .args([
+                    "-c",
+                    "init.defaultBranch=main",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+        git(&["checkout", "-q", "-b", "feature"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "feature work"]);
+        git(&["checkout", "-q", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "main work"]);
+        git(&["merge", "-q", "--no-ff", "-m", "merge feature", "feature"]);
+        git(&["tag", "v1.0"]);
+        git(&["checkout", "-q", "-b", "topic", "HEAD~1"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "unmerged idea"]);
+        git(&["checkout", "-q", "main"]);
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.command("git").unwrap();
+        let git_id = app.focused;
+        assert!(matches!(app.panes.get(&git_id), Some(Pane::Git(_))));
+        for _ in 0..200 {
+            app.tick();
+            if let Some(Pane::Git(view)) = app.panes.get(&git_id) {
+                if view.data.commits.len() == 5 && view.detail.is_some() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..buffer.area.height)
+            .map(|y| {
+                let row: String = (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect();
+                row.trim_end().to_string() + "\n"
+            })
+            .collect();
+        for expected in [
+            "feature",
+            "topic",
+            "merge feature",
+            "unmerged idea",
+            "v1.0",
+            "◉ main",
+        ] {
+            assert!(screen.contains(expected), "missing {expected}");
+        }
+        // Selecting a branch jumps to its newest commit; Enter shows only it.
+        press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        let Some(Pane::Git(view)) = app.panes.get(&git_id) else {
+            unreachable!()
+        };
+        let topic = view
+            .data
+            .branches
+            .iter()
+            .position(|b| b.name == "topic")
+            .unwrap();
+        for _ in 0..topic {
+            press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        }
+        let Some(Pane::Git(view)) = app.panes.get(&git_id) else {
+            unreachable!()
+        };
+        assert_eq!(view.selected().unwrap().subject, "unmerged idea");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        let Some(Pane::Git(view)) = app.panes.get(&git_id) else {
+            unreachable!()
+        };
+        assert_eq!(view.only.as_deref(), Some("topic"));
+        // Ctrl-b G maximizes and restores the focused Git pane, and refocuses it.
+        let prefix_g = |app: &mut App| {
+            press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(app, KeyCode::Char('G'), KeyModifiers::SHIFT);
+        };
+        prefix_g(&mut app);
+        assert!(app.zoom);
+        // Maximized, the selected commit's details have room.
+        for _ in 0..200 {
+            app.tick();
+            if let Some(Pane::Git(view)) = app.panes.get(&git_id) {
+                if view.data.commits.len() == 4 && view.detail.is_some() {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let screen: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(
+            screen.contains("Ada <ada@example.com>  20"),
+            "commit details shown"
+        );
+        prefix_g(&mut app);
+        assert!(!app.zoom);
+        app.focused = 0;
+        prefix_g(&mut app);
+        assert_eq!(app.focused, git_id);
+        assert_eq!(app.panes.len(), 2, "one Git pane, reused");
     }
 }

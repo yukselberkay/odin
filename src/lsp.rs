@@ -1142,8 +1142,10 @@ mod tests {
 
         lsp.request(Kind::Definition, 0, &buffers[0], 4).unwrap();
         let events = wait(&mut lsp, &|_, e| !e.is_empty());
+        // Buffers resolve symlinks (macOS temp dirs live under /private/var).
+        let real = path.canonicalize().unwrap();
         assert!(
-            matches!(&events[0], Event::Definition { path: p, line: 1, character: 4, .. } if p == &path)
+            matches!(&events[0], Event::Definition { path: p, line: 1, character: 4, .. } if p == &real)
         );
 
         lsp.request(Kind::Completion, 0, &buffers[0], 4).unwrap();

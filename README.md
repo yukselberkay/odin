@@ -5,7 +5,7 @@
 Code, project files, Git, a shell, and your AI CLI — in one keyboard-driven screen.
 No Electron, no web service, no account required by Odin, no telemetry.
 
-![Odin running with Rust source, an AI launcher, shell, and Git tree](docs/odin.png)
+![Odin in the Visual Studio Dark theme: file explorer with icons, Rust source, the AI launcher, a live shell and the Git tree](docs/odin.png)
 
 ## Start here
 
@@ -193,6 +193,8 @@ you keep typing commands and editing, so you can follow it step by step; **F1** 
 such as `:w` are entered in Odin, not the shell. While a terminal is focused,
 use **Ctrl-b then `:`** to open Odin's command prompt.
 
+![The F1 field guide docked beside the editor](docs/odin-field-guide.png)
+
 ## Horizontal and vertical tiles
 
 The names describe the dividing border: a **vertical split** creates left/right
@@ -235,7 +237,7 @@ Then use these keys **inside Odin**:
 6. `Ctrl-b o` cycles back to the C editor; `Ctrl-b z` zooms/unzooms it.
    To give the C editor more room, use `Ctrl-b Ctrl-Right` a few times.
 
-![Odin with C source left, README top-right, and a live C build terminal bottom-right](docs/odin-c-tiles.png)
+![Odin with C source left, the README rendered top-right, and a live C build terminal bottom-right](docs/odin-c-tiles.png)
 
 This is a live application capture, not a mockup. The file explorer and Git
 history remain visible alongside both split directions.
@@ -404,6 +406,8 @@ also works in any mode and inserts at the cursor.
 Odin starts the standard language server for a file the first time you open it, in
 the project root, and talks to it in the background. Install the server once:
 
+![clangd hover docs for a C function, with an error marked in the gutter and underlined](docs/odin-lsp.png)
+
 | Language | Server Odin looks for | Install |
 | --- | --- | --- |
 | Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
@@ -430,6 +434,8 @@ LSP off, see `lsp` and `lsp_enabled` in [config.example.toml](config.example.tom
 Existing `.md`/`.markdown` files open **rendered**; new or empty ones open as
 source so you can write. The preview is read-only and re-renders on every edit,
 and when an AI or shell tool rewrites the file on disk.
+
+![Markdown source on the left with a live rendered preview on the right](docs/odin-markdown.png)
 
 | Key / command | Action |
 | --- | --- |
@@ -579,8 +585,7 @@ ANSI colors. The original `phosphor` (default) and `amber` also remain available
 | Monokai | `:theme monokai` | Warm black, lime, hot pink, cyan |
 | GitHub Dark | `:theme github-dark` | Near-black, blue, coral, lavender |
 
-[View the theme live preview](docs/odin-dark-themes.png) (captured before the two
-Visual Studio palettes were reworked).
+![All bundled themes side by side](docs/odin-dark-themes.png)
 
 In an editor, press **Esc**, type a command above, then **Enter**. From a terminal
 or AI pane, press **Ctrl-b**, then **:**, type `theme dracula` (without another
@@ -615,6 +620,8 @@ Themes are plain files loaded at runtime from `~/.config/odin/themes/`
 | `:themes` (or `:theme`, or **Ctrl-b t**) | Open the **theme picker**: ↑↓ previews each theme live, typing filters, Enter keeps it (saved as default), Esc restores the previous one |
 | `:theme na` then **Tab** | Complete theme names; Tab again cycles matches |
 | `:theme name` | Switch; the footer says whether it is built in or which file it came from |
+
+![The theme picker filtered to dark themes, Visual Studio Dark highlighted](docs/odin-theme-picker.png)
 
 **Omarchy themes are picked up automatically.** On an [Omarchy](https://omarchy.org)
 desktop, every installed theme (system and `~/.config/omarchy/themes`) appears in the

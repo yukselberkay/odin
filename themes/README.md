@@ -6,7 +6,6 @@ AI launcher, syntax highlighting, and embedded terminals. Phosphor remains Odin'
 default; Amber and the external Ice example remain compatible.
 
 [Compare the themes in the live UI preview](../docs/odin-dark-themes.png).
-(The capture predates the reworked Visual Studio palettes.)
 The preview shows actual Odin terminal output with C, Rust, and a running shell.
 
 ## Select a theme

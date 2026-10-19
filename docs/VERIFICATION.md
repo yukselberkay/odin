@@ -23,12 +23,15 @@ Date: 2026-10-18. Host: Linux x86_64. Rust 1.99.1.
 
 ## Screenshot provenance
 
-`odin.png` is a screenshot of actual terminal output from the release executable,
-not a design mockup. Odin is launched in a 168×48 PTY with `examples/beacon.rs`,
-an AI launcher, and an interactive shell. The compiled Beacon example runs in
-that shell. The captured ANSI stream is rendered by xterm.js in headless Chromium
-and captured with Playwright. No editor contents, terminal output or UI labels
-are fabricated for the image.
+The README screenshots (`odin.png`, `odin-c-tiles.png`, `odin-markdown.png`,
+`odin-lsp.png`, `odin-theme-picker.png`, `odin-field-guide.png`,
+`odin-dark-themes.png`) are renders of Odin's real UI in the Visual Studio Dark theme
+(the sheet shows every bundled theme): the app's own draw code fills a ratatui test
+buffer, which is converted to HTML in JetBrainsMono Nerd Font and captured with
+headless Chromium at 2×. Shell panes are real PTYs (`bash --norc` with an `odin $`
+prompt) running `cargo run --example beacon` and the `forge.c` build; the LSP image
+is a live clangd session. No editor contents, terminal output or UI labels are
+fabricated for the images.
 
 The image shows the AI **launcher**, not an authenticated model response.
 

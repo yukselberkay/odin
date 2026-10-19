@@ -24,14 +24,40 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
     time::Duration,
 };
 
+/// Point the terminal's own default background/foreground (OSC 11/10) at the theme,
+/// so a light terminal profile can't show through the window padding or any cell
+/// Odin leaves at the default color. Terminals without OSC 10/11 ignore it.
+fn set_terminal_colors(theme: &config::Theme) -> io::Result<()> {
+    let hex = |value: &str| match config::color(value) {
+        ratatui::style::Color::Rgb(r, g, b) => Some(format!("#{r:02x}{g:02x}{b:02x}")),
+        _ => None,
+    };
+    let (Some(background), Some(foreground)) = (hex(&theme.background), hex(&theme.foreground))
+    else {
+        reset_terminal_colors();
+        return Ok(());
+    };
+    let mut out = io::stdout();
+    write!(out, "\x1b]11;{background}\x07\x1b]10;{foreground}\x07")?;
+    out.flush()
+}
+
+/// Hand the terminal back its profile colors (OSC 111/110).
+fn reset_terminal_colors() {
+    let mut out = io::stdout();
+    let _ = write!(out, "\x1b]111\x07\x1b]110\x07");
+    let _ = out.flush();
+}
+
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        reset_terminal_colors();
         let _ = disable_raw_mode();
         let _ = execute!(
             io::stdout(),
@@ -101,6 +127,7 @@ fn main() -> Result<()> {
     // Restore the user's terminal even on panic; no shell or raw escape output survives.
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        reset_terminal_colors();
         let _ = disable_raw_mode();
         let _ = execute!(
             io::stdout(),
@@ -120,8 +147,15 @@ fn main() -> Result<()> {
     )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
+    let mut applied_colors = None;
     while app.running {
         app.tick();
+        // Follow runtime theme switches (`:theme NAME`).
+        let colors = (app.theme.background.clone(), app.theme.foreground.clone());
+        if applied_colors.as_ref() != Some(&colors) {
+            set_terminal_colors(&app.theme)?;
+            applied_colors = Some(colors);
+        }
         if app.redraw {
             app.redraw = false;
             terminal.draw(|frame| ui::draw(frame, &mut app))?;

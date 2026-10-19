@@ -903,9 +903,7 @@ impl App {
             return Ok(());
         }
         if ctrl && key.code == KeyCode::Char('e') {
-            self.sidebar_visible = true;
-            self.sidebar_focus = !self.sidebar_focus;
-            self.mode = Mode::Normal;
+            self.toggle_explorer();
             return Ok(());
         }
         if ctrl
@@ -1165,10 +1163,7 @@ impl App {
             KeyCode::Char('c') => self.open_terminal(None, Some(Axis::Vertical))?,
             KeyCode::Char('a') => self.open_ai(Some(Axis::Horizontal))?,
             KeyCode::Char('A') => self.open_ai(Some(Axis::Vertical))?,
-            KeyCode::Char('e') => {
-                self.sidebar_visible = true;
-                self.sidebar_focus = !self.sidebar_focus;
-            }
+            KeyCode::Char('e') => self.toggle_explorer(),
             KeyCode::Char('s') => {
                 self.sidebar_visible = !self.sidebar_visible;
                 self.sidebar_focus = false;
@@ -1226,6 +1221,18 @@ impl App {
             _ => self.notice("Ctrl-b: % split · \" stack · c shell · a AI · arrows focus · ? help"),
         }
         Ok(())
+    }
+    /// Ctrl-e: focus the file explorer, even from the sidebar's Git section;
+    /// pressed in the explorer, return to the active pane.
+    fn toggle_explorer(&mut self) {
+        if self.sidebar_focus && !self.git_focus {
+            self.sidebar_focus = false;
+        } else {
+            self.sidebar_visible = true;
+            self.sidebar_focus = true;
+            self.git_focus = false;
+        }
+        self.mode = Mode::Normal;
     }
     fn cycle(&mut self) {
         let ids: Vec<usize> = self.panes.keys().copied().collect();
@@ -2666,6 +2673,21 @@ mod tests {
         };
         press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
         assert!(app.sidebar_focus);
+        // Ctrl-e lands in the explorer even after visiting the Git section.
+        press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert!(app.git_focus);
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(app.sidebar_focus && !app.git_focus);
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(
+            !app.sidebar_focus,
+            "Ctrl-e in the explorer returns to the pane"
+        );
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('g'), KeyModifiers::NONE);
+        assert!(app.sidebar_focus && app.git_focus);
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(app.sidebar_focus && !app.git_focus);
         let start = app.buffers.len();
         // Each arrow press shows the highlighted file; focus stays in the sidebar.
         press(&mut app, KeyCode::Down, KeyModifiers::NONE);

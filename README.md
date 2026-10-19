@@ -286,7 +286,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 
 | Shortcut | Action |
 | --- | --- |
-| `Ctrl-e` | Focus/leave file sidebar |
+| `Ctrl-e` | Focus the file explorer (also from the Git section); in the explorer, return to the pane |
 | `Ctrl-p` | Open a path; Tab completes currently visible tree entries |
 | `Ctrl-s` | Save editor buffer |
 | `Ctrl-q` | Quit, refusing unsaved buffers |
@@ -322,7 +322,8 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 | `r` | Refresh file tree (e.g. after creating files in a terminal) |
 | `n` | Start a new-file command; supply the path and press Enter |
 | Tab | Switch between file explorer and Git section |
-| Escape or `Ctrl-e` | Return focus to the active pane |
+| Escape | Return focus to the active pane |
+| `Ctrl-e` | From the Git section: jump to the explorer; in the explorer: return to the pane |
 
 Dotfiles and dot-directories (`.github`, `.env`, `.git`, `.odin`, …) are always shown.
 Only `target` and `node_modules` build output is left out of the tree; `Ctrl-p` still

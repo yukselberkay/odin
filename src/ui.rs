@@ -1661,7 +1661,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ("Ctrl-b b", "Send literal Ctrl-b to a terminal"),
         (
             "FILES + GIT",
-            "Ctrl-e focuses sidebar; Tab switches Files / Git",
+            "Ctrl-e focuses Explorer; Tab switches Files / Git",
         ),
         (
             "↑ ↓ / → / ← / Enter",

@@ -1,12 +1,13 @@
 use ratatui::layout::Rect;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Axis {
     Horizontal,
     Vertical,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Tile {
     Leaf(usize),
     Split {
@@ -80,6 +81,16 @@ impl Tile {
                 } else {
                     first.remove(target) || second.remove(target)
                 }
+            }
+        }
+    }
+
+    pub fn leaves(&self, out: &mut Vec<usize>) {
+        match self {
+            Self::Leaf(id) => out.push(*id),
+            Self::Split { first, second, .. } => {
+                first.leaves(out);
+                second.leaves(out);
             }
         }
     }

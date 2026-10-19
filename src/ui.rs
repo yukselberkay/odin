@@ -1654,6 +1654,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             ":git  or  Ctrl-b G",
             "Git pane: branches, graph, details; again maximizes",
         ),
+        (
+            ":session [save|forget]",
+            "Reopen this project as you left it (.odin/)",
+        ),
         ("Ctrl-b b", "Send literal Ctrl-b to a terminal"),
         (
             "FILES + GIT",

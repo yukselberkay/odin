@@ -7,7 +7,8 @@ use crate::{
     layout::{Axis, Tile},
     lsp::{self, Lsp},
     markdown::{self, Previews},
-    terminal::TerminalPane,
+    session::{self, SavedBuffer, SavedPane, Session},
+    terminal::{Launch, TerminalPane},
     workspace::{self, FileTree, GitInfo},
 };
 use anyhow::{bail, Context, Result};
@@ -171,6 +172,11 @@ pub struct App {
     last_reload: Instant,
     theme_stamp: Option<std::time::SystemTime>,
     completion: Option<(String, usize)>,
+    /// Last session JSON written to `.odin/session.json`, to skip unchanged saves.
+    session_json: String,
+    last_session: Instant,
+    /// Autosave this project's session (`:session forget` turns it off until restart).
+    session_enabled: bool,
 }
 
 impl App {
@@ -234,6 +240,9 @@ impl App {
             last_reload: Instant::now(),
             theme_stamp,
             completion: None,
+            session_json: String::new(),
+            last_session: Instant::now(),
+            session_enabled: true,
         };
         if let Some(path) = initial {
             app.open(&path)?;
@@ -425,7 +434,8 @@ impl App {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(program);
-        let terminal = TerminalPane::spawn(program, &args, env, &self.root, label, &self.theme)?;
+        let terminal =
+            TerminalPane::spawn(program, &args, env, &self.root, label, &self.theme, &[])?;
         if let Some(axis) = split {
             self.add_pane(Pane::Terminal(terminal), axis);
         } else {
@@ -472,8 +482,234 @@ impl App {
         if !force && self.buffers.iter().any(|b| b.dirty) {
             bail!("Unsaved buffers. :wa to save all, :qa! to discard and exit.");
         }
+        if let Err(error) = self.save_session(false) {
+            self.fail(format!("Session not saved: {error:#}"));
+        }
         self.running = false;
         Ok(())
+    }
+    /// The workspace as it is now, for `.odin/session.json`.
+    pub fn session(&self) -> Session {
+        let relative = |path: &Path| {
+            path.strip_prefix(&self.root)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        let buffers = self
+            .buffers
+            .iter()
+            .map(|b| {
+                // Keep the text only when the file on disk won't give it back.
+                let changed = b.dirty || (b.path.is_none() && b.text.len_chars() > 0);
+                SavedBuffer {
+                    path: b.path.as_deref().map(relative),
+                    text: changed.then(|| b.text.to_string()),
+                    row: b.row,
+                    col: b.col,
+                    scroll: b.scroll,
+                }
+            })
+            .collect();
+        let panes = self
+            .panes
+            .iter()
+            .map(|(id, pane)| {
+                let saved = match pane {
+                    Pane::Editor(buffer) => SavedPane::Editor { buffer: *buffer },
+                    Pane::Preview(p) => SavedPane::Preview {
+                        buffer: p.buffer,
+                        scroll: p.scroll,
+                    },
+                    Pane::Terminal(t) => {
+                        let (transcript, cwd) = t.saved();
+                        SavedPane::Terminal {
+                            launch: t.launch.clone(),
+                            cwd: cwd.map(|cwd| relative(&cwd)),
+                            transcript,
+                        }
+                    }
+                    Pane::Ai => SavedPane::Ai,
+                    Pane::Git(view) => SavedPane::Git {
+                        only: view.only.clone(),
+                    },
+                };
+                (*id, saved)
+            })
+            .collect();
+        Session::new(
+            self.tiles.clone(),
+            self.focused,
+            self.zoom,
+            self.sidebar_visible,
+            buffers,
+            panes,
+        )
+    }
+    /// Save the session when it changed. `force` also starts sessions in a project
+    /// that has none yet (`:session save`).
+    pub fn save_session(&mut self, force: bool) -> Result<()> {
+        if !self.config.restore_session || !self.session_enabled {
+            return Ok(());
+        }
+        if !force && !session::wanted(&self.root) {
+            return Ok(());
+        }
+        for pane in self.panes.values_mut() {
+            if let Pane::Terminal(terminal) = pane {
+                terminal.snapshot();
+            }
+        }
+        let json = serde_json::to_string(&self.session())?;
+        if json != self.session_json || force {
+            session::save(&self.root, &json)?;
+            self.session_json = json;
+        }
+        Ok(())
+    }
+    /// Reopen this project's saved session, if any. Problems are reported, never fatal.
+    pub fn restore_session(&mut self) {
+        if !self.config.restore_session {
+            return;
+        }
+        match session::load(&self.root) {
+            Ok(Some(saved)) => match self.restore(saved) {
+                Ok(note) => self.notice(note),
+                Err(error) => self.fail(format!("Session not restored: {error:#}")),
+            },
+            Ok(None) => {}
+            Err(error) => self.fail(format!("Session not restored: {error:#}")),
+        }
+    }
+    fn restore(&mut self, saved: Session) -> Result<String> {
+        let mut buffers = Vec::new();
+        let mut unsaved = 0;
+        for b in saved.buffers {
+            let path = b.path.map(|p| self.root.join(p));
+            let mut buffer = match &path {
+                Some(p) if p.is_file() => Buffer::open(p).unwrap_or_else(|_| Buffer::empty()),
+                Some(p) => {
+                    let mut buffer = Buffer::empty();
+                    buffer.path = Some(p.clone());
+                    buffer
+                }
+                None => Buffer::empty(),
+            };
+            if let Some(text) = b.text {
+                if buffer.text != text.as_str() {
+                    buffer.text = ropey::Rope::from_str(&text);
+                    buffer.dirty = true;
+                    buffer.revision += 1;
+                    unsaved += 1;
+                }
+            }
+            buffer.row = b.row;
+            buffer.col = b.col;
+            buffer.scroll = b.scroll;
+            buffer.clamp();
+            buffers.push(buffer);
+        }
+        if buffers.is_empty() {
+            buffers.push(Buffer::empty());
+        }
+        let last = buffers.len() - 1;
+        self.buffers = buffers;
+        self.panes.clear();
+        let mut problems = Vec::new();
+        for (id, pane) in saved.panes {
+            let pane = match pane {
+                SavedPane::Editor { buffer } => Pane::Editor(buffer.min(last)),
+                SavedPane::Preview { buffer, scroll } => {
+                    let mut preview = Preview::new(buffer.min(last));
+                    preview.scroll = scroll;
+                    preview.synced = Some(self.buffers[buffer.min(last)].row);
+                    Pane::Preview(preview)
+                }
+                SavedPane::Ai => Pane::Ai,
+                SavedPane::Git { only } => {
+                    let mut view = GitView::new(self.root.clone());
+                    if only.is_some() {
+                        view.only = only;
+                        view.refresh();
+                    }
+                    Pane::Git(Box::new(view))
+                }
+                SavedPane::Terminal {
+                    launch,
+                    cwd,
+                    transcript,
+                } => match self.restore_terminal(launch, cwd, &transcript) {
+                    Ok(terminal) => Pane::Terminal(terminal),
+                    Err(error) => {
+                        problems.push(format!("{error:#}"));
+                        Pane::Ai
+                    }
+                },
+            };
+            self.panes.insert(id, pane);
+        }
+        self.tiles = saved.tiles;
+        self.next_pane = self.panes.keys().max().map_or(0, |id| id + 1);
+        self.focused = if self.panes.contains_key(&saved.focused) {
+            saved.focused
+        } else {
+            *self.panes.keys().next().context("Session has no panes")?
+        };
+        self.zoom = saved.zoom;
+        self.sidebar_visible = saved.sidebar_visible;
+        self.sidebar_focus = false;
+        self.mode = Mode::Normal;
+        self.session_json = serde_json::to_string(&self.session()).unwrap_or_default();
+        let mut note = format!("Session restored · {} panes", self.panes.len());
+        if unsaved > 0 {
+            note.push_str(&format!(" · {unsaved} unsaved buffer(s)"));
+        }
+        if let Some(problem) = problems.first() {
+            note.push_str(&format!(" · {problem}"));
+        }
+        Ok(note)
+    }
+    /// Start a saved terminal again: shells in their last directory below their old
+    /// output, AI CLIs resuming their latest conversation where they support it.
+    fn restore_terminal(
+        &self,
+        launch: Launch,
+        cwd: Option<PathBuf>,
+        transcript: &str,
+    ) -> Result<TerminalPane> {
+        let cwd = cwd
+            .map(|c| self.root.join(c))
+            .filter(|c| c.is_dir())
+            .unwrap_or_else(|| self.root.clone());
+        let mut history = transcript.as_bytes().to_vec();
+        if !history.is_empty() {
+            history.extend_from_slice(
+                b"\x1b[0m\r\n\x1b[2m-- restored from your last session --\x1b[0m\r\n",
+            );
+        }
+        let agent = match &launch {
+            Launch::Agent { name, model } => self.agent_command(name, model.as_deref(), true).ok(),
+            _ => None,
+        };
+        let (program, args, env, launch, history) = match agent {
+            // A resumed CLI redraws its own conversation; don't show it twice.
+            Some(((program, args, env), resumed)) => {
+                let history = if resumed { Vec::new() } else { history };
+                (program, args, env, launch, history)
+            }
+            None => {
+                let (shell, args) = crate::platform::shell(self.config.shell.as_deref());
+                (shell, args, Vec::new(), Launch::Shell, history)
+            }
+        };
+        let label = Path::new(&program)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&program)
+            .to_string();
+        let mut terminal =
+            TerminalPane::spawn(&program, &args, &env, &cwd, &label, &self.theme, &history)?;
+        terminal.launch = launch;
+        Ok(terminal)
     }
     fn save(&mut self, path: Option<PathBuf>) -> Result<()> {
         let id = self
@@ -530,6 +766,15 @@ impl App {
         if self.git_receiver.is_none() && self.last_git.elapsed() >= Duration::from_secs(4) {
             self.git_receiver = Some(workspace::refresh_git(self.root.clone()));
             self.last_git = Instant::now();
+        }
+        // Closing the terminal window kills Odin without a clean quit, so keep the
+        // session current while you work.
+        if self.last_session.elapsed() >= Duration::from_secs(5) {
+            self.last_session = Instant::now();
+            if let Err(error) = self.save_session(false) {
+                self.session_enabled = false;
+                self.fail(format!("Session autosave off: {error:#}"));
+            }
         }
         if self.last_reload.elapsed() >= Duration::from_secs(2) {
             self.last_reload = Instant::now();
@@ -1765,6 +2010,24 @@ impl App {
             .collect()
     }
     fn launch(&mut self, program: &str, model: Option<&str>, split: Option<Axis>) -> Result<()> {
+        let ((command, args, env), _) = self.agent_command(program, model, false)?;
+        self.open_terminal_with(Some((&command, args)), &env, split)?;
+        if let Some(Pane::Terminal(t)) = self.panes.get_mut(&self.focused) {
+            t.launch = Launch::Agent {
+                name: program.into(),
+                model: model.map(String::from),
+            };
+        }
+        Ok(())
+    }
+    /// What to run for an AI CLI: (program, args, env, resumed). With `resume`, the
+    /// built-in CLIs reopen their latest conversation in this project.
+    fn agent_command(
+        &self,
+        program: &str,
+        model: Option<&str>,
+        resume: bool,
+    ) -> Result<(crate::local_ai::Run, bool)> {
         use crate::local_ai;
         if program == "local" {
             let (program, args, env) = local_ai::local(
@@ -1773,15 +2036,14 @@ impl App {
                 local_ai::ollama_models,
                 crate::lsp::on_path,
             )?;
-            return self.open_terminal_with(Some((&program, args)), &env, split);
+            return Ok(((program, args, env), false));
         }
         // An [ai.<name>] entry, which may also override a built-in like `codex`.
         if let Some(launcher) = self.config.ai.get(program).cloned() {
             if !crate::lsp::on_path(&launcher.program) {
                 bail!("`{}` from [ai.{program}] is not on PATH", launcher.program);
             }
-            let (program, args, env) = local_ai::command(&launcher, model)?;
-            return self.open_terminal_with(Some((&program, args)), &env, split);
+            return Ok((local_ai::command(&launcher, model)?, false));
         }
         let (_, _, name, hint) = AGENTS.iter().find(|a| a.1 == program).copied().unwrap_or((
             ' ',
@@ -1792,7 +2054,15 @@ impl App {
         if !crate::lsp::on_path(program) {
             bail!("{name} is not installed (`{program}` not on PATH) · install: {hint}");
         }
-        self.open_terminal(Some((program, Vec::new())), split)
+        let continue_flags: &[&str] = match program {
+            "claude" | "agy" => &["--continue"],
+            "codex" => &["resume", "--last"],
+            "gemini" => &["--resume", "latest"],
+            _ => &[],
+        };
+        let flags = if resume { continue_flags } else { &[] };
+        let args = flags.iter().map(|f| f.to_string()).collect();
+        Ok(((program.into(), args, Vec::new()), !flags.is_empty()))
     }
     fn toggle_help(&mut self) {
         self.help = !self.help;
@@ -2074,6 +2344,37 @@ impl App {
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
             "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            "session" => match arg {
+                "" => self.notice(if !self.config.restore_session {
+                    "Sessions are off (restore_session = false)".to_string()
+                } else if !self.session_enabled {
+                    "Session saving is off until restart; :session save turns it back on".into()
+                } else if session::wanted(&self.root) {
+                    format!(
+                        "Session saves to {} and reopens next time",
+                        session::file(&self.root).display()
+                    )
+                } else {
+                    "No session here yet; :session save keeps this workspace for next time".into()
+                }),
+                "save" => {
+                    self.session_enabled = true;
+                    self.save_session(true)?;
+                    self.notice(format!(
+                        "Session saved to {}",
+                        session::file(&self.root).display()
+                    ));
+                }
+                "forget" | "clear" => {
+                    session::forget(&self.root)?;
+                    self.session_enabled = false;
+                    self.session_json.clear();
+                    self.notice(
+                        "Session deleted; Odin will start fresh here (:session save undoes)",
+                    );
+                }
+                _ => bail!("Use :session, :session save or :session forget"),
+            },
             "git" | "graph" => match arg {
                 "" => self.git_pane()?,
                 "all" => {
@@ -2157,6 +2458,9 @@ impl App {
                     )
                 })?;
                 self.open_terminal(Some((&plugin.program, plugin.args)), Some(Axis::Vertical))?;
+                if let Some(Pane::Terminal(t)) = self.panes.get_mut(&self.focused) {
+                    t.launch = Launch::Command { name: arg.into() };
+                }
             }
             "" => {}
             _ => bail!("Unknown command: {verb}. F1 for help"),
@@ -2803,5 +3107,79 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         prefix_g(&mut app);
         assert_eq!(app.focused, git_id);
         assert_eq!(app.panes.len(), 2, "one Git pane, reused");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn sessions_bring_back_panes_unsaved_text_and_terminal_output() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "saved line\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path.clone()), false).unwrap();
+        press(&mut app, KeyCode::Char('A'), KeyModifiers::SHIFT);
+        for c in " + unsaved".chars() {
+            press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        app.open_terminal(
+            Some((
+                "/bin/sh",
+                vec!["-c".into(), "cd sub; echo shell-marker; exec sh".into()],
+            )),
+            Some(Axis::Vertical),
+        )
+        .unwrap();
+        let shell = app.focused;
+        for _ in 0..200 {
+            app.tick();
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            if t.transcript().contains("shell-marker") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        app.focused = 0;
+        app.save_session(false).unwrap();
+        let mut leaves = Vec::new();
+        app.tiles.leaves(&mut leaves);
+        drop(app);
+
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.restore_session();
+        assert!(
+            app.message.starts_with("Session restored"),
+            "{}",
+            app.message
+        );
+        let mut restored = Vec::new();
+        app.tiles.leaves(&mut restored);
+        assert_eq!(restored, leaves);
+        assert_eq!(app.focused, 0);
+        let buffer = app.active_buffer().unwrap();
+        assert_eq!(buffer.line(0), "saved line + unsaved");
+        assert!(buffer.dirty, "unsaved text stays unsaved");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved line\n");
+        let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+            panic!("terminal pane restored")
+        };
+        assert!(t.transcript().contains("shell-marker"));
+        assert!(t.transcript().contains("restored from your last session"));
+        // The shell came back in the directory it had moved to.
+        let mut cwd = None;
+        for _ in 0..100 {
+            cwd = t.cwd();
+            if cwd.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if let Some(cwd) = cwd {
+            assert!(cwd.ends_with("sub"), "{}", cwd.display());
+        }
+        let ignore = std::fs::read_to_string(dir.path().join(".odin/.gitignore")).unwrap();
+        assert!(ignore.contains('*'));
     }
 }

@@ -11,6 +11,7 @@ mod lsp;
 mod markdown;
 mod omarchy;
 mod platform;
+mod session;
 mod terminal;
 mod ui;
 mod vscode;
@@ -72,10 +73,11 @@ impl Drop for TerminalGuard {
 fn main() -> Result<()> {
     let mut path = None;
     let mut demo = false;
+    let mut fresh = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-h" | "--help" => {
-                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo]\n\n  --demo     Open an editor, AI launcher and shell\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
+                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
                 return Ok(());
             }
             "-V" | "--version" => {
@@ -83,6 +85,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             "--demo" => demo = true,
+            "--fresh" => fresh = true,
             _ if arg.starts_with('-') => bail!("Unknown option: {arg}"),
             _ => {
                 if path.is_some() {
@@ -124,7 +127,15 @@ fn main() -> Result<()> {
             .to_path_buf();
         (root, Some(path))
     };
-    let mut app = app::App::new(root, initial, demo)?;
+    // A saved session reopens first; a file named on the command line opens on top.
+    let restore = !demo && !fresh;
+    let mut app = app::App::new(root, if restore { None } else { initial.clone() }, demo)?;
+    if restore {
+        app.restore_session();
+        if let Some(path) = &initial {
+            app.open(path)?;
+        }
+    }
     // Restore the user's terminal even on panic; no shell or raw escape output survives.
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

@@ -12,8 +12,25 @@ use std::{
     thread,
 };
 
+/// What a terminal pane runs, so a restored session can start it again.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Launch {
+    Shell,
+    /// An AI CLI from the launcher or `:ai`: a built-in name or an `[ai.<name>]`.
+    Agent {
+        name: String,
+        model: Option<String>,
+    },
+    /// A `:run` command plugin; restored as a shell rather than run again.
+    Command {
+        name: String,
+    },
+}
+
 pub struct TerminalPane {
     pub title: String,
+    pub launch: Launch,
     pub parser: Arc<Mutex<vt100::Parser>>,
     pub dirty: Arc<AtomicBool>,
     pub exited: Option<String>,
@@ -22,6 +39,10 @@ pub struct TerminalPane {
     child: Box<dyn Child + Send + Sync>,
     size: (u16, u16),
     colors: Arc<Mutex<(u32, u32)>>,
+    /// Output arrived since the last session snapshot.
+    output: Arc<AtomicBool>,
+    /// Session snapshot (transcript, working directory), rebuilt only after output.
+    saved: Option<(String, Option<std::path::PathBuf>)>,
 }
 
 impl TerminalPane {
@@ -32,6 +53,7 @@ impl TerminalPane {
         root: &Path,
         title: &str,
         theme: &Theme,
+        history: &[u8],
     ) -> Result<Self> {
         let pair = native_pty_system().openpty(PtySize {
             rows: 24,
@@ -58,10 +80,15 @@ impl TerminalPane {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader()?;
         let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK)));
+        // Earlier output (a restored session) goes in before the program starts.
+        let mut screen = vt100::Parser::new(24, 80, SCROLLBACK);
+        screen.process(history);
+        let parser = Arc::new(Mutex::new(screen));
         let dirty = Arc::new(AtomicBool::new(true));
+        let output = Arc::new(AtomicBool::new(true));
         let parser_clone = Arc::clone(&parser);
         let dirty_clone = Arc::clone(&dirty);
+        let output_clone = Arc::clone(&output);
         let reply_writer = Arc::clone(&writer);
         let colors = Arc::new(Mutex::new(terminal_colors(theme)));
         let query_colors = Arc::clone(&colors);
@@ -95,12 +122,14 @@ impl TerminalPane {
                             }
                         }
                         dirty_clone.store(true, Ordering::Relaxed);
+                        output_clone.store(true, Ordering::Relaxed);
                     }
                 }
             }
         });
         Ok(Self {
             title: title.into(),
+            launch: Launch::Shell,
             parser,
             dirty,
             exited: None,
@@ -109,7 +138,46 @@ impl TerminalPane {
             child,
             size: (24, 80),
             colors,
+            output,
+            saved: None,
         })
+    }
+    /// Bring the session snapshot up to date; cheap when nothing was printed since.
+    pub fn snapshot(&mut self) {
+        if self.saved.is_none() || self.output.swap(false, Ordering::Relaxed) {
+            self.saved = Some((self.transcript(), self.cwd()));
+        }
+    }
+    /// The last [`snapshot`](Self::snapshot): (transcript, working directory).
+    pub fn saved(&self) -> (String, Option<std::path::PathBuf>) {
+        self.saved.clone().unwrap_or_default()
+    }
+    /// Screen and scrollback with colors, for saving the session.
+    pub fn transcript(&self) -> String {
+        match self.parser.lock() {
+            Ok(mut parser) => String::from_utf8_lossy(&replay(&mut parser, false)).into_owned(),
+            Err(_) => String::new(),
+        }
+    }
+    /// The running program's working directory (where the shell has `cd`'d to).
+    pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        let pid = self.child.process_id()?;
+        if cfg!(target_os = "linux") {
+            return std::fs::read_link(format!("/proc/{pid}/cwd")).ok();
+        }
+        if cfg!(target_os = "macos") {
+            // lsof prints the cwd entry as a line starting with `n`.
+            let out = std::process::Command::new("lsof")
+                .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            return String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix('n'))
+                .map(std::path::PathBuf::from);
+        }
+        None
     }
     pub fn set_theme(&mut self, theme: &Theme) {
         *self.colors.lock().unwrap_or_else(|e| e.into_inner()) = terminal_colors(theme);
@@ -201,6 +269,17 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
         parser.set_size(rows, cols);
         return;
     }
+    let replay = replay(parser, true);
+    let mut fresh = vt100::Parser::new(rows, cols, SCROLLBACK);
+    fresh.process(&replay);
+    *parser = fresh;
+}
+
+/// The screen and scrollback as a byte stream that redraws them in any parser:
+/// rejoined lines with their colors. With `cursor`, it also puts the cursor back and
+/// restores the input modes and pen, for a live resize; without, it is a transcript.
+fn replay(parser: &mut vt100::Parser, cursor: bool) -> Vec<u8> {
+    let viewing = parser.screen().scrollback();
     let (height, width) = parser.screen().size();
     let (cursor_row, cursor_col) = parser.screen().cursor_position();
     // Every row from the oldest scrollback line down, with its soft-wrap flag. A
@@ -221,6 +300,8 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
     for row in 0..height {
         lines.push(read_row(parser, row));
     }
+    parser.set_scrollback(viewing);
+    let keep_cursor = cursor;
     let cursor = history + usize::from(cursor_row);
     // Blank rows below both the cursor and the last text are just unused screen.
     let last = lines
@@ -238,11 +319,11 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
         } else {
             cells.iter().rposition(|c| !blank(c)).map_or(0, |c| c + 1)
         };
-        if index == cursor {
+        if index == cursor && keep_cursor {
             end = end.max(usize::from(cursor_col));
         }
         for (col, cell) in cells.iter().enumerate().take(end) {
-            if index == cursor && col == usize::from(cursor_col) {
+            if keep_cursor && index == cursor && col == usize::from(cursor_col) {
                 replay.extend_from_slice(b"\x1b7");
             }
             if cell.is_wide_continuation() {
@@ -258,7 +339,7 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
                 text => replay.extend_from_slice(text.as_bytes()),
             }
         }
-        if index == cursor && end == usize::from(cursor_col) {
+        if keep_cursor && index == cursor && end == usize::from(cursor_col) {
             replay.extend_from_slice(b"\x1b7");
         }
         if !wrapped && index != last {
@@ -266,13 +347,15 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
             attrs = None;
         }
     }
-    replay.extend_from_slice(b"\x1b8");
-    // Keep keypad/paste/mouse modes and the pen the program left set.
-    replay.extend(parser.screen().input_mode_formatted());
-    replay.extend(parser.screen().attributes_formatted());
-    let mut fresh = vt100::Parser::new(rows, cols, SCROLLBACK);
-    fresh.process(&replay);
-    *parser = fresh;
+    if keep_cursor {
+        replay.extend_from_slice(b"\x1b8");
+        // Keep keypad/paste/mouse modes and the pen the program left set.
+        replay.extend(parser.screen().input_mode_formatted());
+        replay.extend(parser.screen().attributes_formatted());
+    } else {
+        replay.extend_from_slice(b"\x1b[0m");
+    }
+    replay
 }
 
 fn blank(cell: &vt100::Cell) -> bool {
@@ -568,8 +651,10 @@ mod tests {
             Path::new("/tmp"),
             "test",
             &Theme::default(),
+            b"earlier output\r\n",
         )
         .unwrap();
+        assert!(terminal.transcript().contains("earlier output"));
         terminal.resize(12, 42).unwrap();
         terminal.send(b"hello\n").unwrap();
         for _ in 0..50 {

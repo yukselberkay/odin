@@ -17,6 +17,9 @@ show_hidden = true
 # Open the Git pane (all branches, commit graph, details) at startup; :git or
 # Ctrl-b G opens it any time.
 git_pane = false
+# Reopen each project as you left it: panes, unsaved text, terminal output, AI
+# conversations. Saved in <project>/.odin/ (Git repositories, or :session save).
+restore_session = true
 # Where AI panes open: "right" (side by side) or "below" (stacked).
 ai_split = "right"
 # shell = "/bin/zsh"

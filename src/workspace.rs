@@ -70,6 +70,7 @@ impl FileTree {
                 let name = name.to_string_lossy();
                 // Dotfiles follow the `.` toggle; .git and build output stay out of the way.
                 if name == ".git"
+                    || name == crate::session::DIR
                     || name == "target"
                     || name == "node_modules"
                     || (!self.hidden && name.starts_with('.'))

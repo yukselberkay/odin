@@ -118,6 +118,8 @@ pub struct Config {
     pub show_hidden: bool,
     /// Open the Git pane (branches and commit graph) at startup.
     pub git_pane: bool,
+    /// Save each project's panes, buffers and terminals to `.odin/` and reopen them.
+    pub restore_session: bool,
     /// Where new AI panes open: "right" (side by side) or "below" (stacked).
     pub ai_split: String,
     /// Your own AI launchers: `[ai.<name>] program = "…" args = […] env = {…}`.
@@ -142,6 +144,7 @@ impl Default for Config {
             icons: Icons::Auto,
             show_hidden: true,
             git_pane: false,
+            restore_session: true,
             ai_split: "right".into(),
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),

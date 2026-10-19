@@ -17,6 +17,7 @@ No Electron, no web service, no account required by Odin, no telemetry.
 - [Markdown preview](#markdown-preview)
 - [Copy and paste](#copy-and-paste)
 - [Language servers](#language-servers-lsp)
+- [Sessions: pick up where you left off](#sessions)
 - [Command reference](#commands)
 - [AI CLIs: Codex, Claude, Gemini, Antigravity](#ai-authentication)
 - [Themes and plugins](#themes-and-command-plugins)
@@ -496,6 +497,41 @@ is not a fuzzy full-project index. Editor paths may be absolute or workspace-rel
 `~` and shell variables are not expanded there. Type paths with spaces directly,
 without shell quotes. Shell commands follow your shell's normal quoting rules.
 
+### Sessions
+
+Odin reopens a project the way you left it. When you quit — or simply close the
+terminal window — and later run `odin` in the same project, you get back:
+
+- the same panes in the same layout, with the same pane focused (and zoomed);
+- every open file at its cursor position, **including unsaved edits** (still marked
+  unsaved, so nothing is written to disk until you `:w`);
+- each terminal's output and scrollback, with the shell started again in the
+  directory you had `cd`'d to;
+- AI panes resuming their latest conversation in this project: Claude Code and
+  Antigravity with `--continue`, Codex with `resume --last`, Gemini with
+  `--resume latest`. Other launchers restart and show their previous output;
+- the AI launcher, Markdown previews, the Git pane and its branch filter.
+
+The session lives in `.odin/session.json` in the project root, readable only by you.
+`.odin/` contains its own `.gitignore`, so it is never committed, and the explorer hides
+it. Odin saves on quit and every few seconds while you work (only when something
+changed), so a closed window or a crash loses at most a few seconds.
+
+Sessions are kept automatically in Git repositories and wherever `.odin/` exists, so
+opening Odin in an arbitrary directory leaves nothing behind; `:session save` starts
+one anywhere. Programs that were running are started again, not continued:
+a shell gets a fresh prompt below its old output, and `:run` plugins come back as a
+shell instead of running again.
+
+| Command | Action |
+| --- | --- |
+| `:session` | Where this project's session is saved, or why it is not |
+| `:session save` | Save now, and keep a session here even outside a Git repository |
+| `:session forget` | Delete the saved session and stop saving until the next start |
+| `odin --fresh` | Start without reopening the session (it is replaced when you quit) |
+
+Set `restore_session = false` in `config.toml` to turn sessions off everywhere.
+
 ### Commands
 
 ```text
@@ -522,6 +558,7 @@ without shell quotes. Shell commands follow your shell's normal quoting rules.
 :run name                 Launch an explicitly configured command plugin
 :git / :git all           Git pane: open, focus, or maximize / show all branches
 :files / :git side        Focus sidebar section
+:session [save|forget]    Session status / save now / delete and stop saving
 :bn / :bp                 Next / previous buffer
 :help                     Field guide
 ```
@@ -701,6 +738,7 @@ theme immediately. The configuration supports:
 | `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
 | `show_hidden` | `true` | Show dotfiles in the explorer at startup (`.` toggles) |
 | `git_pane` | `false` | Open the Git pane (branches, commit graph, details) at startup |
+| `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |

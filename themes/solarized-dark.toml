@@ -1,0 +1,27 @@
+# Solarized Dark — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme solarized-dark. Copy under a new name to customize.
+background = "#002b36"
+foreground = "#93a1a1"
+muted = "#839496"
+accent = "#2aa198"
+secondary = "#268bd2"
+warning = "#b58900"
+border = "#586e75"
+selection = "#073642"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198", "#eee8d5",
+  "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+]
+
+[syntax_colors]
+comment = "#839496"
+keyword = "#859900"
+function = "#268bd2"
+type = "#b58900"
+string = "#2aa198"
+number = "#d33682"
+constant = "#cb4b16"
+operator = "#859900"
+variable = "#93a1a1"
+

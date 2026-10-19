@@ -1,0 +1,31 @@
+# Visual Studio Code "Dark 2026" — VS Code's newest built-in dark theme
+# (extensions/theme-defaults/themes/2026-dark.json). Odin adaptation; see themes/README.md.
+# Built in: :theme vscode-dark-2026. Copy to ~/.config/odin/themes/ to customize.
+background = "#121314"
+foreground = "#bbbebf"
+muted = "#8c8c8c"
+accent = "#3994bc"
+secondary = "#48a0c7"
+warning = "#cca700"
+border = "#2a2b2c"
+selection = "#242526"
+line_number = "#858889"
+# ANSI 0–7, then bright 8–15: VS Code's integrated-terminal defaults on the 2026 panel color.
+ansi = [
+  "#191a1b", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5",
+  "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#e5e5e5",
+]
+
+# Token colors as VS Code resolves them: 2026 rules plus the more specific Dark+
+# rules it inherits (control flow, types, numbers, constants, operators).
+[syntax_colors]
+comment = "#8b949e"
+keyword = "#ff7b72"
+control = "#c586c0"
+function = "#d2a8ff"
+type = "#4ec9b0"
+string = "#a5d6ff"
+number = "#b5cea8"
+constant = "#569cd6"
+operator = "#d4d4d4"
+variable = "#c9d1d9"

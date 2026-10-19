@@ -1,0 +1,10 @@
+# Install as ~/.config/odin/themes/ice.toml, then :theme ice.
+background = "#10141d"
+foreground = "#d3dce5"
+muted = "#73859b"
+accent = "#99c9f0"
+secondary = "#c7b4e8"
+warning = "#e5be84"
+border = "#344453"
+selection = "#203044"
+syntax = "base16-ocean.dark"

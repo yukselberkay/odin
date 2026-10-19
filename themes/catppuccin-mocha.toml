@@ -1,0 +1,27 @@
+# Catppuccin Mocha — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme catppuccin-mocha. Copy under a new name to customize.
+background = "#1e1e2e"
+foreground = "#cdd6f4"
+muted = "#a6adc8"
+accent = "#cba6f7"
+secondary = "#89dceb"
+warning = "#f9e2af"
+border = "#45475a"
+selection = "#313244"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+  "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+]
+
+[syntax_colors]
+comment = "#9399b2"
+keyword = "#cba6f7"
+function = "#89b4fa"
+type = "#f9e2af"
+string = "#a6e3a1"
+number = "#fab387"
+constant = "#f5c2e7"
+operator = "#89dceb"
+variable = "#cdd6f4"
+

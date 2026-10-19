@@ -1,0 +1,53 @@
+# ── Rust / Cargo ──────────────────────────────────────────────
+# Build output (debug, release, incremental caches, docs).
+/target/
+**/target/
+# rustfmt backups.
+**/*.rs.bk
+# Windows debug symbols.
+*.pdb
+# Cargo.lock is committed on purpose: Odin is a binary, and `--locked`
+# builds must reproduce the exact dependency versions.
+
+# ── Profiling, coverage and test leftovers ─────────────────────
+*.profraw
+*.profdata
+/coverage/
+lcov.info
+tarpaulin-report.html
+cobertura.xml
+flamegraph.svg
+perf.data
+perf.data.old
+**/proptest-regressions/
+*.snap.new
+
+# ── Editors and IDEs ──────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.\#*
+\#*\#
+.helix/
+.zed/
+
+# ── Operating systems ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Local configuration and secrets ───────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Scratch files ─────────────────────────────────────────────
+*.tmp
+*.log
+*.orig
+*.rej

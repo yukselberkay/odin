@@ -1,0 +1,723 @@
+# ◉ Odin
+
+**All systems in view.** A lean, Rust-native terminal workspace for people who build.
+
+Code, project files, Git, a shell, and your AI CLI — in one keyboard-driven screen.
+No Electron, no web service, no account required by Odin, no telemetry.
+
+![Odin running with Rust source, an AI launcher, shell, and Git tree](docs/odin.png)
+
+## Start here
+
+- [Build from source](#build-from-source)
+- [Install and update](#install-and-update)
+- [Your first five minutes](#your-first-five-minutes)
+- [Horizontal and vertical tiles](#horizontal-and-vertical-tiles)
+- [Keyboard reference](#keyboard)
+- [Markdown preview](#markdown-preview)
+- [Copy and paste](#copy-and-paste)
+- [Language servers](#language-servers-lsp)
+- [Command reference](#commands)
+- [AI CLIs: Codex, Claude, Gemini, Antigravity](#ai-authentication)
+- [Themes and plugins](#themes-and-command-plugins)
+- [Troubleshooting](#troubleshooting)
+
+## Build from source
+
+### 1. Prerequisites
+
+Odin targets **Linux and macOS**, not Windows. You need:
+
+- Rust **1.88 or newer** and Cargo. Current stable Rust is recommended.
+- A C compiler/linker and platform development headers.
+- A UTF-8 terminal with 256-color support; true color is recommended.
+- Git for the Git sidebar. No Git repository is required just to edit files.
+- Python 3 only if you want to run the optional PTY smoke test.
+
+On Debian/Ubuntu, install the compiler and Git:
+
+```sh
+sudo apt update
+sudo apt install build-essential git curl
+```
+
+On Fedora:
+
+```sh
+sudo dnf install gcc gcc-c++ make git curl
+```
+
+On macOS, install the Xcode Command Line Tools:
+
+```sh
+xcode-select --install
+```
+
+Install Rust using the official [rustup instructions](https://rustup.rs/).
+Choose the stable toolchain. Open a new terminal afterward, or load Cargo's
+environment in your current shell:
+
+```sh
+. "$HOME/.cargo/env"
+rustc --version
+cargo --version
+cc --version
+git --version
+```
+
+If Rust is already installed but too old, use `rustup update stable`.
+
+### 2. Get the source and build
+
+Extract the supplied **source ZIP**, or use your existing Odin checkout, then
+enter the directory containing `Cargo.toml`:
+
+```sh
+cd odin
+cargo build --release --locked
+./target/release/odin --version
+```
+
+There is no public repository URL or crates.io installation assumed by this
+guide. The first build downloads dependencies; subsequent builds reuse Cargo's
+cache. `--locked` uses the versions recorded in `Cargo.lock`.
+
+The executable is `target/release/odin`. No Node.js, browser, or Python runtime
+is needed to run the editor. Screenshot tooling is not part of the application.
+
+### 3. Run without installing
+
+```sh
+./target/release/odin .                   # Browse the current project
+./target/release/odin examples/forge.c    # Open a specific file
+./target/release/odin . --demo            # Rust example + AI launcher + shell
+./target/release/odin --help
+```
+
+Run these inside an interactive terminal, not through a pipe. When opening a
+file inside a Git repository, Odin uses that repository as its workspace root;
+outside Git it uses the file's parent directory.
+When opening a directory, that directory is the workspace. Shell panes start
+there, and editor command paths are resolved relative to it.
+
+`--demo` looks for `examples/beacon.rs` in the selected directory. It opens an
+AI **launcher**, not an authenticated model session. It does not use an API key
+or make model requests. Recommended screen: **140 × 40** or larger; a three-pane
+layout is more comfortable at **168 × 48**. Below 70 columns the sidebar is hidden.
+
+## Install and update
+
+From the source directory, install into Cargo's user-level bin directory:
+
+```sh
+cargo install --path . --locked
+odin --version
+odin ~/projects/my-project
+```
+
+By default the binary is installed at `~/.cargo/bin/odin`. Cargo's bin directory
+must be on `PATH`; `. "$HOME/.cargo/env"` sets that up for the current shell.
+Do **not** run `cargo install` with `sudo`.
+
+For an explicit alternative installation location:
+
+```sh
+cargo install --path . --locked --root "$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+odin --version
+```
+
+Add that PATH line to your shell startup file if you want it to persist.
+After obtaining a newer source checkout/archive, update with:
+
+```sh
+cargo install --path . --locked --force
+```
+
+If you chose a custom root, repeat `--root "$HOME/.local"` when updating.
+For a Cargo-managed default installation, uninstall with:
+
+```sh
+cargo uninstall odin-editor
+```
+
+For the custom-root installation, use
+`cargo uninstall --root "$HOME/.local" odin-editor`.
+The **package** is named `odin-editor`; its **executable** is named `odin`.
+Uninstalling does not remove your projects or user configuration.
+
+## Your first five minutes
+
+1. **Open a project:** run `odin /path/to/project` (or the local binary above).
+   A directory opens a scratch editor plus the file/Git sidebar.
+2. **Choose a file:** press `Ctrl-e`, use Up/Down to select a file or directory,
+   Right to expand, Left to collapse, and Enter to open. Focus moves to the editor.
+3. **Edit:** the bottom bar initially says `NORMAL`. Press `i` to enter `INSERT`,
+   type your changes, then press Escape to return to normal mode.
+4. **Save:** press `Ctrl-s`, or type `:w` and Enter from normal mode. For a scratch
+   buffer use `:w notes.txt`. To create another file use `:e notes.txt`, then save.
+   Parent directories must already exist. A new buffer is not a disk file until saved.
+5. **Navigate:** type `:25` and Enter to jump to line 25. Type `/needle` and Enter
+   to search; `n` and `N` find the next/previous occurrence.
+6. **Run tools:** press `Ctrl-b`, release, then `c` to open a shell below the
+   current pane. Type build/run commands there as in any other terminal.
+7. **Return to editing:** press `Ctrl-b`, release, then an arrow to focus a pane,
+   or `o` to cycle panes. Use `Ctrl-b z` to temporarily maximize the active pane.
+8. **Exit:** `Ctrl-q` or `:qa` refuses to exit with unsaved changes. Use `:wa` to
+   save modified named buffers first. `:qa!` explicitly discards changes and exits.
+
+Press **F1** for the built-in field guide. It docks on the right and stays open while
+you keep typing commands and editing, so you can follow it step by step; **F1** again
+(or `:help`) closes it and **Alt-↑/↓** scrolls it. Editor commands
+such as `:w` are entered in Odin, not the shell. While a terminal is focused,
+use **Ctrl-b then `:`** to open Odin's command prompt.
+
+## Horizontal and vertical tiles
+
+The names describe the dividing border: a **vertical split** creates left/right
+panes; a **horizontal split** creates top/bottom panes.
+
+| Layout | Shortcut | Odin command |
+| --- | --- | --- |
+| Side-by-side editor panes | `Ctrl-b %` | `:vsplit` |
+| Stacked editor panes | `Ctrl-b "` | `:split` |
+| Shell below the active pane | `Ctrl-b c` | `:term` |
+
+Splits nest inside the focused pane. Splitting an editor initially shows the
+same buffer in both views; use `:e another-file` in the new view to open something
+else. The buffer contents, cursor, and scroll position are shared when two views
+show the same buffer. Closing a terminal pane stops its terminal child process.
+
+### Reproduce the C + terminal screenshot
+
+From the Odin source directory:
+
+```sh
+odin .
+# Without installing: ./target/release/odin .
+```
+
+Then use these keys **inside Odin**:
+
+1. Type `:e examples/forge.c`, then Enter — open the C source in the first pane.
+2. `Ctrl-b %` — create a right-hand editor pane (vertical dividing border).
+3. Type `:e README.md`, then Enter — open this guide in the right-hand pane.
+4. `Ctrl-b c` — create a terminal below the README (horizontal dividing border).
+5. In that terminal, compile and run the included C program:
+
+   ```sh
+   mkdir -p target
+   cc -std=c11 -Wall -Wextra -Werror examples/forge.c -o target/forge
+   ./target/forge
+   ```
+
+6. `Ctrl-b o` cycles back to the C editor; `Ctrl-b z` zooms/unzooms it.
+   To give the C editor more room, use `Ctrl-b Ctrl-Right` a few times.
+
+![Odin with C source left, README top-right, and a live C build terminal bottom-right](docs/odin-c-tiles.png)
+
+This is a live application capture, not a mockup. The file explorer and Git
+history remain visible alongside both split directions.
+
+Start with `odin .` as above even if you extracted a ZIP: the archive does not
+contain Git history. To enable Git for a new project, run `git init` in its root;
+the history graph appears after you make commits.
+
+## What works
+
+- **Modal text editing:** Vim-inspired normal/insert modes, arrows/hjkl, words,
+  line jumps, delete/change, grouped undo/redo, search with wrap,
+  automatic indentation, bracketed paste, horizontal/vertical scrolling.
+- **Copy and paste:** `v`/`V` or Shift+arrows select; Ctrl-c/Ctrl-x/Ctrl-v and
+  `y`/`d`/`p` share the **system clipboard** with your other apps.
+- **Language servers:** diagnostics, hover docs, go-to-definition, completion and
+  formatting for Rust, Go, Python, C and C++ via their standard servers.
+- **Markdown preview:** `.md` files open rendered — headings, lists, task
+  lists, tables, highlighted code blocks, quotes and GitHub alerts — with a live
+  side-by-side preview that follows your cursor while you edit.
+- **Source highlighting:** bundled Rust, C, C++, Python, Go grammars, plus the
+  other bundled Syntect languages. Absolute/relative line numbers.
+- **File explorer:** keyboard traversal, expandable directories, hidden-file
+  toggle, new file buffers, visible-path completion, open-buffer cycling.
+- **Tiling:** recursively nested horizontal/vertical splits, directional focus,
+  resize, zoom, and close. Up to 12 panes; editor views can share buffers.
+- **Terminals:** real PTYs, ANSI/256/true-color rendering, resize propagation,
+  application cursor keys, bracketed paste, terminal query responses, and
+  bounded scrollback. Shells and CLI tools run in the project directory.
+- **AI panes:** run **OpenAI Codex**, **Claude Code**, **Gemini CLI** or the
+  **Antigravity CLI** (`agy`) as installed executables, beside or below your code.
+  These are the real tools, not imitations or provider-specific chat widgets.
+- **Git sidebar:** current branch, changed/untracked files, and recent ASCII
+  commit graph. Enter opens a changed file. Git is read-only here; perform
+  staging/commits in the terminal or your preferred Git TUI.
+- **External-change refresh:** clean open files refresh when AI/shell tools edit
+  them. Dirty buffers remain yours; saving detects conflicting disk changes.
+- **Extensions:** user-owned TOML themes and explicitly invoked command plugins.
+
+## Keyboard
+
+`Ctrl-b` is a prefix: hold Ctrl and press `b`, release both, then press the
+following key. `Ctrl-b %` is not three simultaneous keys. `%` and `"` require
+Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl-e` | Focus/leave file sidebar |
+| `Ctrl-p` | Open a path; Tab completes currently visible tree entries |
+| `Ctrl-s` | Save editor buffer |
+| `Ctrl-q` | Quit, refusing unsaved buffers |
+| `Ctrl-b %` / `Ctrl-b "` | Side-by-side / stacked editor split |
+| `Ctrl-b arrows` or `Ctrl-b h/j/k/l` | Move between panes |
+| `Ctrl-b Ctrl-arrows` | Resize the closest split on that axis |
+| `Ctrl-b o` | Cycle panes |
+| `Ctrl-b c` | New terminal |
+| `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
+| `Ctrl-b z` / `x` | Zoom / close current pane |
+| `Ctrl-b s` / `g` | Toggle sidebar / focus Git |
+| `Ctrl-b PageUp` / `PageDown` | Terminal scrollback |
+| `Ctrl-b b` | Send literal Ctrl-b to the terminal |
+| `Ctrl-b :` | Command prompt, including from terminal panes |
+| `F1` | Field guide beside your work (toggle); Alt-↑/↓ scrolls it |
+
+`Ctrl-q`, `Ctrl-e`, `Ctrl-p`, F1 and the Ctrl-b prefix are reserved by Odin even
+inside a terminal. Other ordinary terminal keys go to the child CLI; Escape alone
+does **not** leave a terminal pane. `Ctrl-s` saves in an editor but passes through
+in terminal panes. Use Ctrl-b plus arrows or `o` to leave a terminal.
+
+### File explorer and Git
+
+These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the status bar).
+
+| Key | Action |
+| --- | --- |
+| Up/Down or `k`/`j` | Select previous/next entry; a selected file is **previewed** in the editor pane while focus stays here |
+| Right or `l` | Expand directory; enter its first child if already expanded; open file |
+| Left or `h` | Collapse current directory or select parent |
+| Enter | Toggle directory / open selected file and move focus to it |
+| `.` | Show/hide dotfiles (shown by default); `.git`, `target` and `node_modules` stay hidden (`Ctrl-p` still opens files there) |
+| `r` | Refresh file tree (e.g. after creating files in a terminal) |
+| `n` | Start a new-file command; supply the path and press Enter |
+| Tab | Switch between file explorer and Git section |
+| Escape or `Ctrl-e` | Return focus to the active pane |
+
+Each entry shows a **file-type icon** in its language's color, the same Nerd Font glyphs
+Omarchy's terminal tools use (Rust, C/C++, Python, Go, JS/TS, Markdown, TOML, YAML,
+shell, images, archives, Git files, Docker, licenses…). They need a Nerd Font in your
+terminal, which Omarchy ships by default; set `icons = false` if you see boxes.
+
+Browsing reuses a single preview buffer (like a VS Code preview tab), so walking past
+many files does not leave them all open. A previewed file stays open once you press
+Enter on it or edit it. In the Git section, Up/Down previews changed files the same way
+and Enter opens one. Git is
+read-only in the sidebar and refreshes periodically. Common status codes include
+`??` (untracked), `M` (modified), and `A` (added); the two columns distinguish
+index and working-tree status. Symlink directories are not recursively expanded.
+
+### Editor: normal mode
+
+| Key | Action |
+| --- | --- |
+| Arrows or `h j k l` | Move left/down/up/right |
+| `w` / `b` | Next / previous word |
+| `0` / `^` / `$` | Line start / first non-whitespace / line end |
+| `gg` / `G` | First / last line |
+| `42G` or `:42` then Enter | Go to line 42 (line numbers are one-based) |
+| `15j` / `15k`, `15` Enter / `15-`, `:+15` / `:-15` | Jump 15 lines down / up — the numbers shown by `:set rnu` |
+| `10j`, `3w`, `5x` | Repeat a movement or character deletion |
+| PageUp / PageDown | Move 20 lines up/down |
+| `Ctrl-u` / `Ctrl-d` | Move 15 lines up/down |
+| `i` / `a` | Insert at cursor / append after cursor |
+| `I` / `A` | Insert at line start / append at line end |
+| `o` / `O` | Open an indented line below / above and enter insert mode |
+| `x` / Delete | Delete character under cursor |
+| `dd` | Cut the line (to the clipboard) |
+| `D` / `C` | Delete to line end / delete to end and enter insert mode |
+| `yy` / `p` / `P` | Copy line / paste below (after cursor) / above (at cursor) |
+| `v` / `V` | Select characters / whole lines (see [Copy and paste](#copy-and-paste)) |
+| `K` / `gd` / `Ctrl-o` | Hover docs / go to definition / jump back |
+| `]d` / `[d` | Next / previous diagnostic |
+| `u` / `Ctrl-r` | Undo / redo |
+| `/text` then Enter | Search, wrapping through the file |
+| `n` / `N` | Next / previous search result |
+| Tab / Shift-Tab | Cycle next / previous open buffer |
+| `:` | Open command prompt; Enter runs it, Escape cancels |
+
+Character movement is UTF-8-aware, not grapheme-cluster-aware. This is a documented
+Vim subset, not full Vim: block selection, arbitrary operators, macros and numeric
+counts for `dd` or `yy` are not implemented.
+
+### Editor: insert mode
+
+Type normally. Enter adds a line with the current indentation; Tab inserts spaces
+using `tab_width`. Backspace/Delete, arrows, Home/End and PageUp/PageDown work.
+Escape returns to normal mode. `Ctrl-s` saves without leaving insert mode.
+`Ctrl-Space` asks the language server for completions (they also pop up after `.`):
+Up/Down or `Ctrl-n`/`Ctrl-p` choose, Tab or Enter accepts, Escape closes the list,
+and typing keeps filtering it.
+
+### Copy and paste
+
+One clipboard, shared with the rest of your desktop: everything you copy in Odin can
+be pasted in other apps and vice versa (via `wl-copy`/`wl-paste` on Wayland,
+`xclip` or `xsel` on X11, `pbcopy`/`pbpaste` on macOS; without them Odin copies through
+the terminal's OSC 52, which most terminals support, even over SSH).
+
+| Keys | Action |
+| --- | --- |
+| Shift + arrows / Home / End | Select from the cursor, in normal or insert mode |
+| `v` / `V` | Start a character / line selection, then move with any motion |
+| `Ctrl-c` or `y` | Copy the selection — or, with nothing selected, the whole line |
+| `Ctrl-x` or `d` | Cut the selection — or the whole line |
+| `Ctrl-v` | Paste at the cursor; a copied **line** goes above the cursor line |
+| `p` / `P` | Paste after / before the cursor; lines go below / above |
+| `c` | Replace the selection: delete it and start typing |
+| Backspace / Delete | Delete the selection without copying |
+| Escape | Cancel the selection |
+
+A Shift-selection made while typing behaves like any text field: typing replaces it
+and a plain arrow cancels it. Your terminal's own paste (often `Ctrl-Shift-V`)
+also works in any mode and inserts at the cursor.
+
+### Language servers (LSP)
+
+Odin starts the standard language server for a file the first time you open it, in
+the project root, and talks to it in the background. Install the server once:
+
+| Language | Server Odin looks for | Install |
+| --- | --- | --- |
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Python | `pyright-langserver`, `basedpyright-langserver`, `pylsp` or `jedi-language-server` | `npm install -g pyright` or `pip install python-lsp-server` |
+| C / C++ | `clangd` | Arch `pacman -S clang` · Debian/Ubuntu `apt install clangd` · macOS Xcode tools |
+
+| Feature | How |
+| --- | --- |
+| Diagnostics | A `●` in the gutter, underlined code, and the message at the bottom of the pane when the cursor is on that line; `]d` / `[d` jump between them |
+| Hover | `K` shows types and docs in a popup; any key closes it |
+| Go to definition | `gd` opens the definition (even in another file); `Ctrl-o` jumps back |
+| Completion | `Ctrl-Space` in insert mode, or automatically after `.` |
+| Format | `:format` formats the file with the server's formatter (rustfmt, gofmt, clang-format…) |
+| Status | The pane footer names the server and counts errors/warnings; `:lsp` lists every language; `:lsp restart` restarts them |
+
+A missing server is reported once, with its install command, and never interrupts
+editing. C/C++ projects give clangd the best results with a `compile_commands.json`
+(CMake: `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`). To use a different server, or turn
+LSP off, see `lsp` and `lsp_enabled` in [config.example.toml](config.example.toml).
+
+### Markdown preview
+
+Existing `.md`/`.markdown` files open **rendered**; new or empty ones open as
+source so you can write. The preview is read-only and re-renders on every edit,
+and when an AI or shell tool rewrites the file on disk.
+
+| Key / command | Action |
+| --- | --- |
+| `j` `k` / arrows | Scroll one line |
+| Space, `Ctrl-d` `Ctrl-u`, PageUp/PageDown | Page down / half page / page up |
+| `g` / `G` | Top / end |
+| `]` / `[` | Next / previous heading |
+| `e`, `i` or Enter | Edit the source at the block you were reading |
+| `/` | Switch to the source and search it |
+| `:preview` or `Ctrl-b m` | Toggle rendered view / source, keeping your place |
+| `:preview split` or `Ctrl-b M` | Live preview beside the source; it follows the cursor |
+
+Rendered: headings, emphasis, strikethrough, inline code, links (their target is
+shown dimmed), images (as alt text), nested bullet/numbered/task lists, block quotes,
+GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`),
+fenced code with syntax highlighting, tables with alignment, rules, footnotes and
+YAML front matter. HTML is reduced to its text. Prose wraps to the pane and is
+centered at a 100-column reading width; wide tables shrink and truncate cells.
+Colors come from the active theme.
+
+### Prompt and buffer behavior
+
+Command/search/path prompts support typing, Backspace, Enter and Escape. In the
+Ctrl-p path prompt, Tab completes from the **currently expanded file tree**; it
+is not a fuzzy full-project index. Editor paths may be absolute or workspace-relative;
+`~` and shell variables are not expanded there. Type paths with spaces directly,
+without shell quotes. Shell commands follow your shell's normal quoting rules.
+
+### Commands
+
+```text
+:w [path]                 Save atomically; unnamed buffers need a path
+:wa                       Save all modified buffers
+:wq                       Save and close view
+:q / :q!                  Close view / allow closing an unsaved view
+:qa / :qa!                Quit / discard unsaved changes and quit
+:e path                   Open a file, or a new buffer if absent
+:reload                   Reload a clean file
+:new                      New scratch editor pane
+:split / :vsplit          Stack / side-by-side split
+:term                     New shell
+:ai [codex|claude|gemini|agy] [right|below]
+                          AI launcher, or launch a CLI, beside or below
+:ai local [model]         Your local LLM ([ai.local], else Ollama / LM Studio)
+:ai <name> [model]        A launcher you defined as [ai.<name>]
+:themes                   Theme picker with live preview (also Ctrl-b t)
+:theme name               Switch theme directly (e.g. dracula or visual-studio-dark)
+:preview [split]          Rendered Markdown in place / beside the source
+:format                   Format the file with its language server
+:lsp / :lsp restart       Language server status / restart all servers
+:set rnu / :set nornu     Relative / absolute line numbers
+:run name                 Launch an explicitly configured command plugin
+:files / :git             Focus sidebar section
+:bn / :bp                 Next / previous buffer
+:help                     Field guide
+```
+
+Closing a view does not delete its buffer: reopen it with Tab or `:bn` in an editor.
+With multiple panes, `:q!` allows closing an unsaved view but retains its buffer;
+closing the last pane with `:q!` exits and discards unsaved buffers.
+`:qa!` explicitly discards all unsaved buffers. Odin does not automatically save
+files on exit. `:wa` stops on an error (for example an unnamed dirty buffer); use
+`:w filename` on that buffer before retrying.
+
+## AI authentication
+
+Install the desired CLI separately using its official instructions:
+
+| Launcher key | CLI | Command | Install |
+| --- | --- | --- | --- |
+| 1 | [OpenAI Codex](https://github.com/openai/codex) | `codex` | `npm install -g @openai/codex` |
+| 2 | [Claude Code](https://code.claude.com/docs/en/overview) | `claude` | see its docs |
+| 3 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `gemini` | `npm install -g @google/gemini-cli` |
+| 4 | [Antigravity CLI](https://codelabs.developers.google.com/genai-for-dev-antigravity-cli) | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
+| 5 | **Local LLM** — your `[ai.local]`, else Ollama or LM Studio | see below | see below |
+| 6–9 | **Your own** `[ai.<name>]` entries | anything | — |
+
+**Placement:** `Ctrl-b a` or `:ai` opens AI panes **beside** your code; `Ctrl-b A` or
+`:ai below` stacks them **below**. Add `below`/`right` to any `:ai` command
+(`:ai claude below`), or set the default with `ai_split = "below"` in config.toml.
+A missing CLI is reported with its install command.
+
+### Bring your own model (local LLMs)
+
+Any AI tool or local model becomes a launcher entry with a few lines in
+`~/.config/odin/config.toml`. Odin runs it in a real terminal pane in your project —
+no API keys or model traffic pass through Odin.
+
+```toml
+[ai.<name>]            # shows up in the launcher (keys 6–9) and as :ai <name>
+program = "aider"      # any executable on PATH
+args = ["--model", "openai/{model}"]   # {model} = :ai <name> <model>, else `model`
+model = "qwen2.5-coder"
+env = { OPENAI_API_BASE = "http://localhost:8080/v1", OPENAI_API_KEY = "local" }
+```
+
+**`[ai.local]`** is special: it is what launcher key **5** and `:ai local [model]` run.
+Without it, Odin finds a local runtime on its own — **Ollama** (`ollama run` with your
+first pulled model, or the one you name) or **LM Studio** (`lms chat`) — and otherwise
+tells you how to add one. Defining `[ai.codex]` etc. overrides a built-in entry.
+
+Recipes:
+
+| Setup | Config |
+| --- | --- |
+| Ollama chat | nothing — key 5 works; or `:ai local qwen3-coder` |
+| Claude Code / Codex / OpenCode on Ollama (v0.15+) | `[ai.local]` `program = "ollama"`, `args = ["launch", "claude"]` (or `"codex"`, `"opencode"`) |
+| Codex on a local model | `[ai.codex-local]` `program = "codex"`, `args = ["--oss", "--local-provider", "ollama", "-m", "{model}"]`, `model = "gpt-oss:20b"` (`lmstudio` also works) |
+| llama.cpp | `[ai.local]` `program = "llama-cli"`, `args = ["-m", "/models/qwen.gguf", "-cnv"]` |
+| Any OpenAI-compatible server (llama-server, vLLM, LM Studio, LocalAI) + aider | the `[ai.<name>]` example above, pointing `OPENAI_API_BASE` at the server |
+
+Make the CLIs you want available on `PATH`; launch them in an AI pane and
+follow their own sign-in/authentication flow. Existing CLI logins work normally.
+For API-key authentication, use the CLI's documented credential manager or
+environment setup **outside Odin**, then start Odin from that environment.
+Do not put API keys into project files or Odin's TOML config.
+
+Odin does not store keys, wrap model requests, disable approvals, or bypass the
+CLI's sandbox/permission settings. AI tools run with the same OS permissions as
+the user, and their own usage/billing applies. No model request is made by Odin
+itself. A missing CLI produces a visible error without destroying a pane.
+
+## Themes and command plugins
+
+Configuration lives at `~/.config/odin/config.toml` on both Linux and macOS,
+or `$XDG_CONFIG_HOME/odin/config.toml`. See [config.example.toml](config.example.toml).
+Odin never loads configuration or executable plugins from the project being opened.
+
+### Bundled dark themes
+
+These themes are embedded in the binary: **no downloads, plugins, or file copying
+are required**. Each coordinates the UI, syntax highlighting, and terminal's 16
+ANSI colors. The original `phosphor` (default) and `amber` also remain available.
+
+| Theme | Command | Palette |
+| --- | --- | --- |
+| Visual Studio 2022 Dark (the IDE) | `:theme visual-studio-dark` | Charcoal, VS-blue accent, teal line numbers, lilac control flow |
+| VS Code Dark 2026 | `:theme vscode-dark-2026` | VS Code's newest built-in dark theme: near-black #121314, teal-blue accent |
+| Dracula | `:theme dracula` | Purple, pink, mint, pale yellow |
+| Nord | `:theme nord` | Polar gray, frost blue, soft green |
+| One Dark | `:theme one-dark` | Slate, blue, violet, gold |
+| Gruvbox Dark | `:theme gruvbox-dark` | Warm charcoal, olive, orange, aqua |
+| Tokyo Night | `:theme tokyo-night` | Midnight blue, lavender, cyan |
+| Catppuccin Mocha | `:theme catppuccin-mocha` | Dark mauve, pastel blue, pink, peach |
+| Solarized Dark | `:theme solarized-dark` | Deep teal, restrained blue, green, yellow |
+| Monokai | `:theme monokai` | Warm black, lime, hot pink, cyan |
+| GitHub Dark | `:theme github-dark` | Near-black, blue, coral, lavender |
+
+[View the theme live preview](docs/odin-dark-themes.png) (captured before the two
+Visual Studio palettes were reworked).
+
+In an editor, press **Esc**, type a command above, then **Enter**. From a terminal
+or AI pane, press **Ctrl-b**, then **:**, type `theme dracula` (without another
+colon), and press **Enter**. Open buffers and terminal processes are preserved.
+The choice is **saved**: Odin starts with it next time. `:theme name` writes (or
+creates) the single top-level line in `~/.config/odin/config.toml`, leaving your other
+settings and comments untouched:
+
+```toml
+theme = "visual-studio-dark"
+```
+
+If updating an older Odin checkout, rebuild/reinstall using
+`cargo install --path . --locked --force`, then restart Odin. Markdown preview adds
+`pulldown-cmark`; VS Code theme import adds `serde_json`. See the [theme guide](themes/README.md) for palette
+credits, customization, and compatibility details.
+
+### Theme plugins — no rebuild needed
+
+Themes are plain files loaded at runtime from `~/.config/odin/themes/`
+(or `$XDG_CONFIG_HOME/odin/themes/`). Drop a file in, and it is available at once:
+
+- **`name.toml`** — an Odin theme (schema in the [theme guide](themes/README.md)).
+- **`name.json`** — a **VS Code color theme**, used as is. Grab any theme's JSON from
+  the VS Code Marketplace or a theme's repository; Odin maps its editor, UI, terminal
+  and TextMate token colors. A relative `"include"` (e.g. Microsoft's
+  `2026-dark.json` → `dark_modern.json` → `dark_plus.json`) is followed when the
+  parent file sits next to it.
+
+| Command | Action |
+| --- | --- |
+| `:themes` (or `:theme`, or **Ctrl-b t**) | Open the **theme picker**: ↑↓ previews each theme live, typing filters, Enter keeps it (saved as default), Esc restores the previous one |
+| `:theme na` then **Tab** | Complete theme names; Tab again cycles matches |
+| `:theme name` | Switch; the footer says whether it is built in or which file it came from |
+
+**Omarchy themes are picked up automatically.** On an [Omarchy](https://omarchy.org)
+desktop, every installed theme (system and `~/.config/omarchy/themes`) appears in the
+picker as `omarchy-<name>` — e.g. `omarchy-tokyo-night`, `omarchy-catppuccin-latte` —
+read straight from the theme's `colors.toml`. The special theme **`omarchy`** follows
+whatever theme your desktop uses: run `omarchy theme set kanagawa` and Odin re-themes
+within two seconds. Themes you create or install with Omarchy show up the next time
+you open the picker.
+
+A user file **overrides** a built-in of the same name, so you can customize any
+bundled theme by copying it into the themes directory. The active theme file is
+**live**: save it and Odin re-themes within two seconds. A broken file keeps the last
+good theme and shows the error; a broken startup theme falls back to Phosphor.
+Theme files cannot execute code; Odin never loads them from project directories.
+
+### Custom themes and plugins
+
+Copy [themes/ice.toml](themes/ice.toml) to `~/.config/odin/themes/ice.toml`, then use
+`:theme ice`. Or copy one of the new TOML files under a **new name**, edit it, and
+select that name — or reuse a built-in name to override it.
+Legacy `syntax = "base16-ocean.dark"` themes still work. The optional
+`[syntax_colors]` table supplies matching semantic syntax colors, and `ansi`
+supplies the 16-color terminal palette; see the theme guide for the full schema.
+
+For the default configuration location, these setup commands create the
+directories and prompt before replacing existing files:
+
+```sh
+mkdir -p "$HOME/.config/odin/themes"
+cp -i config.example.toml "$HOME/.config/odin/config.toml"
+cp -i themes/ice.toml "$HOME/.config/odin/themes/ice.toml"
+```
+
+If you set `XDG_CONFIG_HOME`, use that directory instead of `~/.config`.
+Configuration changes take effect on the next launch; `:theme name` changes the
+theme immediately. The configuration supports:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `theme` | `"phosphor"` | Any bundled theme above, `phosphor`/`amber`, or a user theme name |
+| `sidebar_width` | `29` | Columns, clamped to 18–60 |
+| `tab_width` | `4` | Spaces inserted by Tab, clamped to 1–16 |
+| `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
+| `icons` | `true` | Nerd Font file-type icons in the explorer; `false` for plain markers |
+| `show_hidden` | `true` | Show dotfiles in the explorer at startup (`.` toggles) |
+| `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
+| `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
+| `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |
+| `[plugins.name]` | None | Explicit `program` and `args` for `:run name` |
+
+```toml
+theme = "phosphor"
+tab_width = 4
+
+[plugins.test]
+program = "cargo"
+args = ["test"]
+```
+
+Run `:run test` to open the configured command in a terminal pane. Programs and
+arguments are passed directly, without shell interpolation. There are no startup
+hooks or auto-running project tasks. Arbitrary in-process/native/WASM editor
+plugins are intentionally not part of v0.1.
+
+## Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| `cargo` or `rustc` not found | Install Rust with rustup, then open a new shell or run `. "$HOME/.cargo/env"`. |
+| Linker / `cc` not found | Install the compiler prerequisites above; on macOS complete the Xcode tools installation. |
+| `odin` not found after installing | Add the selected installation's `bin` directory to PATH, or run its executable by full path. |
+| Need a specific Odin executable | `command -v odin` shows which installation your shell selects. |
+| “Odin needs an interactive terminal” | Launch directly in Terminal, iTerm2, a Linux terminal emulator or an SSH terminal; do not pipe stdout. |
+| No syntax colors / monochrome UI | Use a color-capable terminal. If you intentionally inherited `NO_COLOR`, `env -u NO_COLOR odin .` enables normal colors for this run. |
+| Sidebar missing or tiny panes | Widen the terminal; the sidebar hides below 70 columns. Ctrl-b s toggles it; Ctrl-b z zooms a pane. |
+| A split shortcut does nothing | Release Ctrl-b before the second key. Use `:vsplit` or `:split` if your keyboard makes `%`/`"` awkward. |
+| Running Odin inside tmux | tmux normally consumes Ctrl-b first. Send its literal prefix with Ctrl-b b, then the Odin action, or configure a different tmux prefix. |
+| C compilation fails | Run from the Odin project directory; ensure `cc` exists and create `target` with `mkdir -p target`. |
+| New file is absent from the sidebar | Save it first, then focus the explorer and press `r`. |
+| `codex` or `claude` cannot launch | Install that CLI separately and verify `command -v codex` or `command -v claude` in the shell that launches Odin. |
+| File changed on disk | Odin refuses to overwrite it. Save your buffer under a new name with `:w recovery-name`, then compare with the disk version. |
+| Read-only, binary or non-UTF-8 file | Odin respects read-only files and only edits UTF-8 text. Convert a copy externally if needed. |
+| Custom theme not found | Use a simple name with letters, digits, hyphens or underscores, and place its TOML in the user themes directory. |
+
+Clean buffers refresh after external edits; buffers with unsaved changes do not.
+Odin does not provide automatic crash recovery or persistent pane layouts in v0.1.
+
+## Design and boundaries
+
+- Ropey text storage with structural-sharing undo (200 snapshots).
+- Cached Syntect highlighting, incremental work budgets and long-line bounds.
+- Ratatui redraws only on input/output/state change, not on every timer tick.
+- PTY I/O runs off the UI thread. Git refreshes on a worker with process timeouts.
+- UTF-8 text only; 16 MiB open-file limit; binary files are rejected.
+- Atomic same-directory saves preserve Unix permission bits. The original file
+  content is checked before replacement, including a second check after writing
+  the temporary file. This is conflict detection, not a filesystem transaction
+  against a malicious concurrent writer. ACLs/xattrs/hard-link identity are not
+  preserved by atomic replacement.
+- First-party Rust forbids `unsafe`; dependencies and child processes have their
+  own trust boundaries. Terminal output is interpreted into cells, never replayed
+  as host escape commands (no host OSC-52 clipboard execution).
+
+**v0.1 intentionally omits:** LSP rename/references/code actions, debugger, block selection,
+full Vim emulation, persistent sessions, mouse-driven editing, remote collaboration,
+and a marketplace. UTF-8 character movement is not grapheme-cluster editing.
+The terminal implements a practical VT100/xterm subset, not every Kitty/sixel/
+graphics protocol. Standard Codex/Claude CLI operation still depends on the installed
+CLI version, its configuration, authentication, and network availability.
+
+## Development
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo build --release --locked
+python3 scripts/pty_smoke.py target/release/odin
+cargo run --example beacon
+cc -std=c11 -Wall -Wextra -Werror examples/forge.c -o target/forge
+./target/forge
+```
+
+CI is configured for Linux and macOS. The local implementation was exercised on
+Linux; a macOS runner is still needed to confirm platform-specific behavior.
+See [docs/VERIFICATION.md](docs/VERIFICATION.md) for the actual validation record.
+
+MIT licensed.

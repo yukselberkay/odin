@@ -1,0 +1,27 @@
+# Nord — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme nord. Copy under a new name to customize.
+background = "#2e3440"
+foreground = "#eceff4"
+muted = "#9aa7bd"
+accent = "#88c0d0"
+secondary = "#b48ead"
+warning = "#ebcb8b"
+border = "#4c566a"
+selection = "#3b4252"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#88c0d0", "#e5e9f0",
+  "#4c566a", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
+]
+
+[syntax_colors]
+comment = "#8b98ae"
+keyword = "#81a1c1"
+function = "#88c0d0"
+type = "#8fbcbb"
+string = "#a3be8c"
+number = "#b48ead"
+constant = "#d08770"
+operator = "#81a1c1"
+variable = "#d8dee9"
+

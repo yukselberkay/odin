@@ -1,0 +1,29 @@
+# Visual Studio 2022 Dark (the IDE, not VS Code) — Odin adaptation.
+# See themes/README.md for palette credits. VS Code users: :theme vscode-dark-2026.
+# Built in: :theme visual-studio-dark. Copy under a new name to customize.
+background = "#1e1e1e"
+foreground = "#dcdcdc"
+muted = "#999999"
+accent = "#007acc"
+secondary = "#4ec9b0"
+warning = "#ffcc00"
+border = "#3f3f46"
+selection = "#264f78"
+line_number = "#2b91af"
+# ANSI 0–7, then bright 8–15: the Campbell scheme used by VS's Developer terminal.
+ansi = [
+  "#1e1e1e", "#c50f1f", "#13a10e", "#c19c00", "#0037da", "#881798", "#3a96dd", "#cccccc",
+  "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#b4009e", "#61d6d6", "#f2f2f2",
+]
+
+[syntax_colors]
+comment = "#57a64a"
+keyword = "#569cd6"
+control = "#d8a0df"
+function = "#dcdcaa"
+type = "#4ec9b0"
+string = "#d69d85"
+number = "#b5cea8"
+constant = "#569cd6"
+operator = "#b4b4b4"
+variable = "#9cdcfe"

@@ -1,0 +1,27 @@
+# One Dark — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme one-dark. Copy under a new name to customize.
+background = "#282c34"
+foreground = "#abb2bf"
+muted = "#9199a8"
+accent = "#61afef"
+secondary = "#c678dd"
+warning = "#e5c07b"
+border = "#4b5263"
+selection = "#3e4451"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#282c34", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#abb2bf",
+  "#5c6370", "#e06c75", "#98c379", "#e5c07b", "#61afef", "#c678dd", "#56b6c2", "#ffffff",
+]
+
+[syntax_colors]
+comment = "#8790a3"
+keyword = "#c678dd"
+function = "#61afef"
+type = "#e5c07b"
+string = "#98c379"
+number = "#d19a66"
+constant = "#e06c75"
+operator = "#56b6c2"
+variable = "#e06c75"
+

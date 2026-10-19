@@ -1,0 +1,27 @@
+# Monokai — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme monokai. Copy under a new name to customize.
+background = "#272822"
+foreground = "#f8f8f2"
+muted = "#a6a28c"
+accent = "#a6e22e"
+secondary = "#66d9ef"
+warning = "#e6db74"
+border = "#555648"
+selection = "#3e3d32"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#272822", "#f92672", "#a6e22e", "#e6db74", "#66d9ef", "#ae81ff", "#a1efe4", "#f8f8f2",
+  "#75715e", "#f92672", "#a6e22e", "#e6db74", "#66d9ef", "#ae81ff", "#a1efe4", "#f9f8f5",
+]
+
+[syntax_colors]
+comment = "#a6a28c"
+keyword = "#f92672"
+function = "#a6e22e"
+type = "#66d9ef"
+string = "#e6db74"
+number = "#ae81ff"
+constant = "#ae81ff"
+operator = "#f92672"
+variable = "#f8f8f2"
+

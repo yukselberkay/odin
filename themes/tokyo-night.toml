@@ -1,0 +1,27 @@
+# Tokyo Night — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme tokyo-night. Copy under a new name to customize.
+background = "#1a1b26"
+foreground = "#c0caf5"
+muted = "#8993b5"
+accent = "#7aa2f7"
+secondary = "#bb9af7"
+warning = "#e0af68"
+border = "#414868"
+selection = "#283457"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+  "#565f89", "#ff899d", "#b9f27c", "#ffc777", "#89b4fa", "#caa9fa", "#b4f9f8", "#c0caf5",
+]
+
+[syntax_colors]
+comment = "#828bb8"
+keyword = "#bb9af7"
+function = "#7aa2f7"
+type = "#2ac3de"
+string = "#9ece6a"
+number = "#ff9e64"
+constant = "#ff9e64"
+operator = "#89ddff"
+variable = "#c0caf5"
+

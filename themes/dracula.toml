@@ -1,0 +1,27 @@
+# Dracula — Odin adaptation. See themes/README.md for palette credits.
+# Built in: :theme dracula. Copy under a new name to customize.
+background = "#282a36"
+foreground = "#f8f8f2"
+muted = "#929bb5"
+accent = "#bd93f9"
+secondary = "#8be9fd"
+warning = "#f1fa8c"
+border = "#44475a"
+selection = "#44475a"
+# ANSI 0–7, then bright 8–15. Explicit truecolor and indices 16–255 stay unchanged.
+ansi = [
+  "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+  "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+]
+
+[syntax_colors]
+comment = "#8390b8"
+keyword = "#ff79c6"
+function = "#50fa7b"
+type = "#8be9fd"
+string = "#f1fa8c"
+number = "#bd93f9"
+constant = "#bd93f9"
+operator = "#ff79c6"
+variable = "#f8f8f2"
+

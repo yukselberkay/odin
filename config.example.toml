@@ -1,0 +1,54 @@
+# Copy to ~/.config/odin/config.toml (Linux and macOS).
+# Or set XDG_CONFIG_HOME and use $XDG_CONFIG_HOME/odin/config.toml.
+theme = "phosphor"
+# Also: visual-studio-dark, vscode-dark-2026, dracula, nord, one-dark, gruvbox-dark,
+# tokyo-night, catppuccin-mocha, solarized-dark, monokai, github-dark, amber.
+# Runtime switch: :theme dracula; :themes lists all. Drop NAME.toml or a VS Code
+# NAME.json into ~/.config/odin/themes/ to add a theme without rebuilding.
+sidebar_width = 29
+tab_width = 4
+relative_numbers = false
+# Nerd Font file-type icons in the explorer (needs a Nerd Font; Omarchy has one).
+icons = true
+# Show dotfiles in the explorer at startup; `.` toggles them.
+show_hidden = true
+# Where AI panes open: "right" (side by side) or "below" (stacked).
+ai_split = "right"
+# shell = "/bin/zsh"
+
+# Language servers start automatically for Rust, Go, Python, C and C++ files.
+lsp_enabled = true
+# Optional: choose a different server per language (keys: rust, go, python, c).
+# [lsp.python]
+# program = "pylsp"
+# args = []
+
+# Bring your own AI / local LLM: each [ai.NAME] appears in the AI launcher
+# (Ctrl-b a, keys 6–9) and as :ai NAME [model]. [ai.local] backs key 5 and
+# :ai local; without it Odin uses Ollama or LM Studio if installed.
+# [ai.local]
+# program = "ollama"
+# args = ["launch", "claude"]        # Claude Code on a local model (Ollama 0.15+)
+#
+# [ai.aider]
+# program = "aider"
+# args = ["--model", "openai/{model}"]
+# model = "qwen2.5-coder"
+# env = { OPENAI_API_BASE = "http://localhost:8080/v1", OPENAI_API_KEY = "local" }
+
+# Command plugins launch ONLY when you type :run NAME.
+# Arguments are passed directly, with no shell interpolation.
+[plugins.check]
+program = "cargo"
+args = ["check", "--all-targets"]
+
+[plugins.test]
+program = "cargo"
+args = ["test"]
+
+[plugins.git]
+program = "git"
+args = ["log", "--graph", "--oneline", "--all", "-30"]
+
+# No API keys belong in this file. Sign in within the AI CLI, or configure
+# its documented environment/credential manager outside Odin.

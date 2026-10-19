@@ -8,7 +8,9 @@ theme = "phosphor"
 sidebar_width = 29
 tab_width = 4
 relative_numbers = false
-# Nerd Font file-type icons in the explorer (needs a Nerd Font; Omarchy has one).
+# File-type icons in the explorer. true: Nerd Font glyphs when a Nerd Font is
+# available (Omarchy has one), else colored markers. "nerd"/"basic" force a style;
+# false hides them.
 icons = true
 # Show dotfiles in the explorer at startup; `.` toggles them.
 show_hidden = true

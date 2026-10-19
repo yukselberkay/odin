@@ -565,11 +565,17 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         let suffix = changed.map(|c| format!(" {c}")).unwrap_or_default();
         let indent = "  ".repeat(entry.depth);
-        let line = if app.config.icons {
-            let (glyph, tint) = if entry.directory {
-                crate::icons::folder(app.tree.expanded.contains(&entry.path), &name)
+        let line = if app.config.icons != crate::config::Icons::Off {
+            let open = app.tree.expanded.contains(&entry.path);
+            let icon = if entry.directory {
+                crate::icons::folder(open, &name)
             } else {
                 crate::icons::file(&entry.path)
+            };
+            let (glyph, tint) = if app.config.icons == crate::config::Icons::Basic {
+                crate::icons::basic(icon, entry.directory, open)
+            } else {
+                icon
             };
             let folder_tint = entry.directory.then(|| color(&theme.secondary));
             let icon_style = match tint.or(folder_tint) {

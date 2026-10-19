@@ -112,8 +112,8 @@ pub struct Config {
     pub tab_width: usize,
     pub shell: Option<String>,
     pub relative_numbers: bool,
-    /// Nerd Font file-type icons in the explorer.
-    pub icons: bool,
+    /// File-type icons in the explorer: `true` (auto), `"nerd"`, `"basic"` or `false`.
+    pub icons: Icons,
     /// Show dotfiles (`.github`, `.gitignore`, …) in the explorer.
     pub show_hidden: bool,
     /// Where new AI panes open: "right" (side by side) or "below" (stacked).
@@ -137,13 +137,48 @@ impl Default for Config {
             tab_width: 4,
             shell: None,
             relative_numbers: false,
-            icons: true,
+            icons: Icons::Auto,
             show_hidden: true,
             ai_split: "right".into(),
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),
             lsp_enabled: true,
             lsp: BTreeMap::new(),
+        }
+    }
+}
+
+/// Explorer icon style. `Auto` resolves to `Nerd` or `Basic` when the config loads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icons {
+    Auto,
+    /// Nerd Font glyphs; they show as `?` or boxes without a Nerd Font.
+    Nerd,
+    /// Plain Unicode markers that every monospace font can draw.
+    Basic,
+    Off,
+}
+
+impl<'de> Deserialize<'de> for Icons {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Flag(bool),
+            Name(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Flag(true) => Ok(Self::Auto),
+            Raw::Flag(false) => Ok(Self::Off),
+            Raw::Name(name) => match name.as_str() {
+                "auto" => Ok(Self::Auto),
+                "nerd" => Ok(Self::Nerd),
+                "basic" => Ok(Self::Basic),
+                "none" | "off" => Ok(Self::Off),
+                _ => Err(serde::de::Error::custom(format!(
+                    "icons must be true, false, \"auto\", \"nerd\" or \"basic\", not \"{name}\""
+                ))),
+            },
         }
     }
 }
@@ -164,6 +199,13 @@ impl Config {
         };
         config.sidebar_width = config.sidebar_width.clamp(18, 60);
         config.tab_width = config.tab_width.clamp(1, 16);
+        if config.icons == Icons::Auto {
+            config.icons = if crate::icons::nerd_font_available() {
+                Icons::Nerd
+            } else {
+                Icons::Basic
+            };
+        }
         Ok(config)
     }
 }
@@ -421,6 +463,17 @@ mod tests {
             .starts_with("theme = \"monokai\"\n[plugins"));
         assert!(save_theme_in(&path, "../bad").is_err());
     }
+    #[test]
+    fn icons_accept_booleans_and_names() {
+        let icons =
+            |value: &str| toml::from_str::<Config>(&format!("icons = {value}")).map(|c| c.icons);
+        assert_eq!(icons("true").unwrap(), Icons::Auto);
+        assert_eq!(icons("false").unwrap(), Icons::Off);
+        assert_eq!(icons("\"nerd\"").unwrap(), Icons::Nerd);
+        assert_eq!(icons("\"basic\"").unwrap(), Icons::Basic);
+        assert!(icons("\"emoji\"").is_err());
+    }
+
     #[test]
     fn config_rejects_unknown_fields() {
         assert!(toml::from_str::<Config>("silent_exec = 'bad'").is_err());

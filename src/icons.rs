@@ -1,9 +1,9 @@
 //! File-type icons for the explorer: Nerd Font glyphs with each language's usual
 //! color, the same set Omarchy's terminal tools (Neovim, eza, yazi) show. They need a
-//! Nerd Font in the terminal (Omarchy ships JetBrainsMono Nerd Font); set
-//! `icons = false` in config.toml otherwise.
+//! Nerd Font in the terminal (Omarchy ships JetBrainsMono Nerd Font). Without one,
+//! `icons = true` falls back to [`basic`] markers in the same colors.
 use ratatui::style::Color;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// `(glyph, color)`; `None` color means "use the theme's text color".
 pub type Icon = (&'static str, Option<Color>);
@@ -108,6 +108,74 @@ pub fn file(path: &Path) -> Icon {
     }
 }
 
+/// The portable stand-in for a Nerd Font icon: a dot in the language's color for
+/// files and a square for folders, drawn by every monospace font.
+pub fn basic((glyph, tint): Icon, directory: bool, open: bool) -> Icon {
+    let glyph = match (directory, open) {
+        (true, true) => "□",
+        (true, false) => "■",
+        // The generic file icon has no language color: keep it hollow.
+        (false, _) if glyph == "\u{f15b}" => "○",
+        (false, _) => "●",
+    };
+    (glyph, tint)
+}
+
+/// Whether this terminal can draw Nerd Font glyphs: it bundles them (kitty, WezTerm,
+/// Ghostty), it runs on Omarchy, or a Nerd Font is installed. An installed font may
+/// still not be the terminal's font; `icons = "nerd"`/`"basic"` overrides the guess.
+pub fn nerd_font_available() -> bool {
+    let env = |key: &str| std::env::var(key).unwrap_or_default();
+    let bundled = matches!(env("TERM_PROGRAM").as_str(), "WezTerm" | "ghostty")
+        || env("TERM") == "xterm-kitty"
+        || std::env::var_os("KITTY_WINDOW_ID").is_some();
+    bundled
+        || std::env::var_os("OMARCHY_PATH").is_some()
+        || font_dirs().iter().any(|d| has_nerd_font(d, 3))
+}
+
+fn font_dirs() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut dirs = Vec::new();
+    if cfg!(target_os = "macos") {
+        dirs.extend(home.map(|h| h.join("Library/Fonts")));
+        dirs.push("/Library/Fonts".into());
+    } else if cfg!(windows) {
+        dirs.extend(
+            std::env::var_os("LOCALAPPDATA")
+                .map(|d| PathBuf::from(d).join("Microsoft/Windows/Fonts")),
+        );
+        dirs.extend(std::env::var_os("WINDIR").map(|d| PathBuf::from(d).join("Fonts")));
+    } else {
+        if let Some(home) = home {
+            dirs.push(home.join(".local/share/fonts"));
+            dirs.push(home.join(".fonts"));
+        }
+        dirs.push("/usr/share/fonts".into());
+        dirs.push("/usr/local/share/fonts".into());
+    }
+    dirs
+}
+
+/// A font file named like a Nerd Font ("JetBrainsMonoNerdFont-Regular.ttf",
+/// "Hack Nerd Font.ttf") within `depth` levels of `dir`.
+fn has_nerd_font(dir: &Path, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if path.is_dir() {
+            return depth > 0 && has_nerd_font(&path, depth - 1);
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        let font = [".ttf", ".otf", ".ttc"]
+            .iter()
+            .any(|ext| name.ends_with(ext));
+        font && name.replace([' ', '-', '_'], "").contains("nerdfont")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +190,26 @@ mod tests {
         assert_eq!(file(Path::new("unknown.zzz")), ("\u{f15b}", None));
         assert_eq!(folder(true, "src").0, "\u{f07c}");
         assert_eq!(folder(false, ".git").0, "\u{e5fb}");
+    }
+
+    #[test]
+    fn basic_icons_keep_the_language_color() {
+        let rust = file(Path::new("main.rs"));
+        assert_eq!(basic(rust, false, false), ("●", rust.1));
+        assert_eq!(basic(file(Path::new("x.zzz")), false, false), ("○", None));
+        assert_eq!(basic(folder(false, "src"), true, false).0, "■");
+        assert_eq!(basic(folder(true, "src"), true, true).0, "□");
+    }
+
+    #[test]
+    fn nerd_fonts_are_found_by_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Menlo.ttc"), "").unwrap();
+        assert!(!has_nerd_font(dir.path(), 3));
+        let nested = dir.path().join("TTF");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("JetBrainsMonoNerdFont-Regular.ttf"), "").unwrap();
+        assert!(has_nerd_font(dir.path(), 3));
+        assert!(!has_nerd_font(dir.path(), 0));
     }
 }

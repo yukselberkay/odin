@@ -75,7 +75,7 @@ If Rust is already installed but too old, use `rustup update stable`.
 2. Install [Git for Windows](https://git-scm.com/download/win).
 3. Use **Windows Terminal** (built into Windows 11) for true color and full key
    support. For explorer icons, set a [Nerd Font](https://www.nerdfonts.com/) in its
-   profile, or put `icons = false` in Odin's config.
+   profile; without one, Odin shows plain colored markers instead.
 
 Then build and install from PowerShell exactly as below (`cargo build --release
 --locked`, `cargo install --path . --locked`); the binary is `odin.exe` in
@@ -326,7 +326,11 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 Each entry shows a **file-type icon** in its language's color, the same Nerd Font glyphs
 Omarchy's terminal tools use (Rust, C/C++, Python, Go, JS/TS, Markdown, TOML, YAML,
 shell, images, archives, Git files, Docker, licenses…). They need a Nerd Font in your
-terminal, which Omarchy ships by default; set `icons = false` if you see boxes.
+terminal, which Omarchy ships by default. With the default `icons = true`, Odin uses
+them when your terminal bundles Nerd Font symbols (kitty, WezTerm, Ghostty) or a Nerd
+Font is installed, and otherwise shows plain markers in the same colors (`●` files,
+`■` folders) instead of `?` or boxes. Force a style with `icons = "nerd"` or
+`icons = "basic"`, or hide icons with `icons = false`.
 
 Browsing reuses a single preview buffer (like a VS Code preview tab), so walking past
 many files does not leave them all open. A previewed file stays open once you press
@@ -665,7 +669,7 @@ theme immediately. The configuration supports:
 | `sidebar_width` | `29` | Columns, clamped to 18–60 |
 | `tab_width` | `4` | Spaces inserted by Tab, clamped to 1–16 |
 | `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
-| `icons` | `true` | Nerd Font file-type icons in the explorer; `false` for plain markers |
+| `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
 | `show_hidden` | `true` | Show dotfiles in the explorer at startup (`.` toggles) |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |

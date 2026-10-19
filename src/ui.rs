@@ -76,13 +76,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "  ALL SYSTEMS IN VIEW",
-            Style::default()
-                .fg(color(&theme.accent))
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("   /  {}", printable(&root)),
+            format!("  {}", printable(&root)),
             Style::default().fg(color(&theme.muted)),
         ),
     ]);

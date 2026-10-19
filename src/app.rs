@@ -2796,6 +2796,8 @@ mod tests {
             .collect();
         assert!(screen.contains("FIELD GUIDE"));
         assert!(screen.contains("a.txt"), "editor pane still visible");
+        assert!(screen.contains("◉ ODIN"), "the logo stays in the header");
+        assert!(!screen.contains("ALL SYSTEMS IN VIEW"), "no tagline");
         assert_eq!(app.help_scroll, 1);
         assert!(!app.help_focus, "typing went back to work");
         // Esc leaves a focused guide open; F1 refocuses it, then closes it.

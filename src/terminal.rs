@@ -58,7 +58,7 @@ impl TerminalPane {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader()?;
         let writer = Arc::new(Mutex::new(pair.master.take_writer()?));
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, 2_000)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(24, 80, SCROLLBACK)));
         let dirty = Arc::new(AtomicBool::new(true));
         let parser_clone = Arc::clone(&parser);
         let dirty_clone = Arc::clone(&dirty);
@@ -117,15 +117,17 @@ impl TerminalPane {
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         let size = (rows.max(1), cols.max(1));
         if self.size != size {
+            // Reflow before the PTY resize so the program's SIGWINCH redraw lands on
+            // the new layout.
+            if let Ok(mut parser) = self.parser.lock() {
+                reflow(&mut parser, size.0, size.1);
+            }
             self.master.resize(PtySize {
                 rows: size.0,
                 cols: size.1,
                 pixel_width: 0,
                 pixel_height: 0,
             })?;
-            if let Ok(mut parser) = self.parser.lock() {
-                parser.set_size(size.0, size.1);
-            }
             self.size = size;
         }
         Ok(())
@@ -183,6 +185,122 @@ impl TerminalPane {
         }
         dirty
     }
+}
+
+const SCROLLBACK: usize = 2_000;
+
+/// Resize `parser` without losing text. vt100's own `set_size` cuts rows to the new
+/// width and drops rows that no longer fit, so shrinking a pane (zoom, split) and
+/// growing it back would leave the shell output truncated. Instead, rebuild the
+/// screen like kitty or iTerm2 do: rejoin soft-wrapped rows into lines and replay
+/// them, with their colors, into a parser of the new size, which wraps them again
+/// and pushes the overflow into scrollback. Full-screen programs (alternate screen)
+/// redraw themselves on SIGWINCH, so they keep the plain resize.
+fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
+    if parser.screen().alternate_screen() {
+        parser.set_size(rows, cols);
+        return;
+    }
+    let (height, width) = parser.screen().size();
+    let (cursor_row, cursor_col) = parser.screen().cursor_position();
+    // Every row from the oldest scrollback line down, with its soft-wrap flag. A
+    // scrollback offset of `n` makes scrollback row `len - n` the first visible row.
+    parser.set_scrollback(usize::MAX);
+    let history = parser.screen().scrollback();
+    let mut lines: Vec<(Vec<vt100::Cell>, bool)> = Vec::new();
+    let read_row = |parser: &vt100::Parser, row: u16| {
+        let screen = parser.screen();
+        let cells = (0..width).filter_map(|col| screen.cell(row, col).cloned());
+        (cells.collect(), screen.row_wrapped(row))
+    };
+    for offset in (1..=history).rev() {
+        parser.set_scrollback(offset);
+        lines.push(read_row(parser, 0));
+    }
+    parser.set_scrollback(0);
+    for row in 0..height {
+        lines.push(read_row(parser, row));
+    }
+    let cursor = history + usize::from(cursor_row);
+    // Blank rows below both the cursor and the last text are just unused screen.
+    let last = lines
+        .iter()
+        .rposition(|(cells, _)| cells.iter().any(|c| !blank(c)))
+        .map_or(cursor, |row| row.max(cursor));
+    lines.truncate(last + 1);
+
+    let mut replay = Vec::new();
+    let mut attrs = None;
+    for (index, (cells, wrapped)) in lines.iter().enumerate() {
+        // A soft-wrapped row is full; only a hard line end has padding to drop.
+        let mut end = if *wrapped {
+            cells.len()
+        } else {
+            cells.iter().rposition(|c| !blank(c)).map_or(0, |c| c + 1)
+        };
+        if index == cursor {
+            end = end.max(usize::from(cursor_col));
+        }
+        for (col, cell) in cells.iter().enumerate().take(end) {
+            if index == cursor && col == usize::from(cursor_col) {
+                replay.extend_from_slice(b"\x1b7");
+            }
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            let style = sgr(cell);
+            if attrs.as_ref() != Some(&style) {
+                replay.extend_from_slice(style.as_bytes());
+                attrs = Some(style);
+            }
+            match cell.contents().as_str() {
+                "" => replay.push(b' '),
+                text => replay.extend_from_slice(text.as_bytes()),
+            }
+        }
+        if index == cursor && end == usize::from(cursor_col) {
+            replay.extend_from_slice(b"\x1b7");
+        }
+        if !wrapped && index != last {
+            replay.extend_from_slice(b"\x1b[0m\r\n");
+            attrs = None;
+        }
+    }
+    replay.extend_from_slice(b"\x1b8");
+    // Keep keypad/paste/mouse modes and the pen the program left set.
+    replay.extend(parser.screen().input_mode_formatted());
+    replay.extend(parser.screen().attributes_formatted());
+    let mut fresh = vt100::Parser::new(rows, cols, SCROLLBACK);
+    fresh.process(&replay);
+    *parser = fresh;
+}
+
+fn blank(cell: &vt100::Cell) -> bool {
+    !cell.has_contents() && cell.bgcolor() == vt100::Color::Default && !cell.inverse()
+}
+
+/// The SGR sequence that sets exactly `cell`'s attributes.
+fn sgr(cell: &vt100::Cell) -> String {
+    let mut code = String::from("\x1b[0");
+    for (on, n) in [
+        (cell.bold(), 1),
+        (cell.italic(), 3),
+        (cell.underline(), 4),
+        (cell.inverse(), 7),
+    ] {
+        if on {
+            code.push_str(&format!(";{n}"));
+        }
+    }
+    for (color, base) in [(cell.fgcolor(), 38), (cell.bgcolor(), 48)] {
+        match color {
+            vt100::Color::Default => {}
+            vt100::Color::Idx(n) => code.push_str(&format!(";{base};5;{n}")),
+            vt100::Color::Rgb(r, g, b) => code.push_str(&format!(";{base};2;{r};{g};{b}")),
+        }
+    }
+    code.push('m');
+    code
 }
 
 fn terminal_colors(theme: &Theme) -> (u32, u32) {
@@ -388,6 +506,55 @@ mod tests {
             "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\"
         );
     }
+    fn shell_screen(rows: u16, cols: u16) -> vt100::Parser {
+        let mut parser = vt100::Parser::new(rows, cols, SCROLLBACK);
+        parser.process(b"$ echo\r\n");
+        parser.process(&b"x".repeat(70));
+        parser.process(b"\r\n\x1b[31mred\x1b[0m line\r\n$ ");
+        parser
+    }
+
+    #[test]
+    fn narrowing_and_widening_a_pane_keeps_its_text() {
+        let mut parser = shell_screen(10, 80);
+        let before = parser.screen().contents();
+        reflow(&mut parser, 10, 20);
+        assert_eq!(parser.screen().size(), (10, 20));
+        assert!(parser.screen().row_wrapped(1), "long line rewraps");
+        reflow(&mut parser, 10, 80);
+        assert_eq!(parser.screen().contents(), before);
+        assert_eq!(parser.screen().cursor_position(), (3, 2));
+        let red = parser.screen().cell(2, 0).unwrap();
+        assert_eq!(red.fgcolor(), vt100::Color::Idx(1));
+        assert_eq!(
+            parser.screen().cell(2, 4).unwrap().fgcolor(),
+            vt100::Color::Default
+        );
+    }
+
+    #[test]
+    fn shortening_a_pane_scrolls_lines_back_into_view_when_it_grows() {
+        let mut parser = vt100::Parser::new(12, 40, SCROLLBACK);
+        for n in 0..10 {
+            parser.process(format!("line {n}\r\n").as_bytes());
+        }
+        let before = parser.screen().contents();
+        reflow(&mut parser, 4, 40);
+        assert!(parser.screen().contents().starts_with("line 7"));
+        reflow(&mut parser, 12, 40);
+        assert_eq!(parser.screen().contents(), before);
+        assert_eq!(parser.screen().cursor_position(), (10, 0));
+    }
+
+    #[test]
+    fn full_screen_programs_keep_a_plain_resize() {
+        let mut parser = vt100::Parser::new(10, 40, SCROLLBACK);
+        parser.process(b"\x1b[?1049hfull screen");
+        reflow(&mut parser, 5, 20);
+        assert!(parser.screen().alternate_screen());
+        assert_eq!(parser.screen().size(), (5, 20));
+    }
+
     #[cfg(unix)]
     #[test]
     fn real_pty_receives_input_and_resizes() {

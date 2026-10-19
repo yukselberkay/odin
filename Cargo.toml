@@ -29,6 +29,11 @@ vt100 = "0.15"
 [dev-dependencies]
 tempfile = "3"
 
+# vt100 0.15 computes `rows - scrollback_offset` when the scrollback offset exceeds
+# the screen height; the wrapped result is what it relies on, as in release builds.
+[profile.dev.package.vt100]
+overflow-checks = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

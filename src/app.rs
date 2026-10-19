@@ -188,11 +188,7 @@ impl App {
             Err(error) => (Theme::default(), Some(format!("{error:#}"))),
         };
         let theme_stamp = config::theme_stamp(&config.theme);
-        let mut tree = FileTree::new(root.clone())?;
-        if config.show_hidden {
-            tree.hidden = true;
-            tree.refresh()?;
-        }
+        let tree = FileTree::new(root.clone())?;
         let mut panes = BTreeMap::new();
         panes.insert(0, Pane::Editor(0));
         let lsp = Lsp::new(root.clone(), config.lsp_enabled, config.lsp.clone());
@@ -1322,16 +1318,6 @@ impl App {
             KeyCode::Char('r') => {
                 self.tree.refresh()?;
                 self.notice("File tree refreshed");
-                None
-            }
-            KeyCode::Char('.') => {
-                self.tree.hidden = !self.tree.hidden;
-                self.tree.refresh()?;
-                self.notice(if self.tree.hidden {
-                    "Dotfiles shown · . hides them"
-                } else {
-                    "Dotfiles hidden · . shows them"
-                });
                 None
             }
             KeyCode::Char('n') => {

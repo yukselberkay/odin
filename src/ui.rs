@@ -619,7 +619,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         text(
             frame,
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-            " ↑↓ move  → open  . hidden",
+            " ↑↓ move  → open  r refresh",
             color(&theme.muted),
         );
     }

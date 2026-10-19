@@ -261,8 +261,8 @@ the history graph appears after you make commits.
   side-by-side preview that follows your cursor while you edit.
 - **Source highlighting:** bundled Rust, C, C++, Python, Go grammars, plus the
   other bundled Syntect languages. Absolute/relative line numbers.
-- **File explorer:** keyboard traversal, expandable directories, hidden-file
-  toggle, new file buffers, visible-path completion, open-buffer cycling.
+- **File explorer:** keyboard traversal, expandable directories, dotfiles always
+  shown, new file buffers, visible-path completion, open-buffer cycling.
 - **Tiling:** recursively nested horizontal/vertical splits, directional focus,
   resize, zoom, and close. Up to 12 panes; editor views can share buffers.
 - **Terminals:** real PTYs, ANSI/256/true-color rendering, resize propagation,
@@ -319,11 +319,14 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 | Right or `l` | Expand directory; enter its first child if already expanded; open file |
 | Left or `h` | Collapse current directory or select parent |
 | Enter | Toggle directory / open selected file and move focus to it |
-| `.` | Show/hide dotfiles (shown by default); `.git`, `target` and `node_modules` stay hidden (`Ctrl-p` still opens files there) |
 | `r` | Refresh file tree (e.g. after creating files in a terminal) |
 | `n` | Start a new-file command; supply the path and press Enter |
 | Tab | Switch between file explorer and Git section |
 | Escape or `Ctrl-e` | Return focus to the active pane |
+
+Dotfiles and dot-directories (`.github`, `.env`, `.git`, `.odin`, …) are always shown.
+Only `target` and `node_modules` build output is left out of the tree; `Ctrl-p` still
+opens files there.
 
 Each entry shows a **file-type icon** in its language's color, the same Nerd Font glyphs
 Omarchy's terminal tools use (Rust, C/C++, Python, Go, JS/TS, Markdown, TOML, YAML,
@@ -513,8 +516,7 @@ terminal window — and later run `odin` in the same project, you get back:
 - the AI launcher, Markdown previews, the Git pane and its branch filter.
 
 The session lives in `.odin/session.json` in the project root, readable only by you.
-`.odin/` contains its own `.gitignore`, so it is never committed, and the explorer hides
-it. Odin saves on quit and every few seconds while you work (only when something
+`.odin/` contains its own `.gitignore`, so it is never committed. Odin saves on quit and every few seconds while you work (only when something
 changed), so a closed window or a crash loses at most a few seconds.
 
 Sessions are kept automatically in Git repositories and wherever `.odin/` exists, so
@@ -736,7 +738,6 @@ theme immediately. The configuration supports:
 | `tab_width` | `4` | Spaces inserted by Tab, clamped to 1–16 |
 | `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
 | `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
-| `show_hidden` | `true` | Show dotfiles in the explorer at startup (`.` toggles) |
 | `git_pane` | `false` | Open the Git pane (branches, commit graph, details) at startup |
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |

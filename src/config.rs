@@ -115,6 +115,8 @@ pub struct Config {
     /// File-type icons in the explorer: `true` (auto), `"nerd"`, `"basic"` or `false`.
     pub icons: Icons,
     /// Show dotfiles (`.github`, `.gitignore`, …) in the explorer.
+    /// Ignored: dotfiles are always shown. Accepted so older config files still load.
+    #[allow(dead_code)]
     pub show_hidden: bool,
     /// Open the Git pane (branches and commit graph) at startup.
     pub git_pane: bool,

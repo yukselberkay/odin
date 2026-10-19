@@ -23,7 +23,6 @@ pub struct FileTree {
     pub expanded: BTreeSet<PathBuf>,
     pub selected: usize,
     pub offset: usize,
-    pub hidden: bool,
 }
 
 pub fn printable(value: &str) -> String {
@@ -41,7 +40,6 @@ impl FileTree {
             expanded: BTreeSet::new(),
             selected: 0,
             offset: 0,
-            hidden: false,
         };
         tree.refresh()?;
         Ok(tree)
@@ -68,13 +66,8 @@ impl FileTree {
             .filter_map(|entry| {
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                // Dotfiles follow the `.` toggle; .git and build output stay out of the way.
-                if name == ".git"
-                    || name == crate::session::DIR
-                    || name == "target"
-                    || name == "node_modules"
-                    || (!self.hidden && name.starts_with('.'))
-                {
+                // Dotfiles are always shown; only build output stays out of the way.
+                if name == "target" || name == "node_modules" {
                     return None;
                 }
                 let kind = entry.file_type().ok()?;
@@ -297,7 +290,21 @@ mod tests {
         fs::write(dir.path().join("src/a.rs"), "").unwrap();
         fs::write(dir.path().join("a.txt"), "").unwrap();
         std::os::unix::fs::symlink(dir.path(), dir.path().join("loop")).unwrap();
+        fs::write(dir.path().join(".env"), "").unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::create_dir(dir.path().join("target")).unwrap();
         let mut tree = FileTree::new(dir.path().into()).unwrap();
+        // Dotfiles and dot-directories always show; build output does not.
+        let names: Vec<_> = tree
+            .entries
+            .iter()
+            .map(|e| e.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&".env".into()) && names.contains(&".git".into()));
+        assert!(!names.contains(&"target".into()));
+        fs::remove_file(dir.path().join(".env")).unwrap();
+        fs::remove_dir(dir.path().join(".git")).unwrap();
+        tree.refresh().unwrap();
         assert_eq!(tree.entries.len(), 3);
         assert!(tree.entries[0].directory);
         tree.activate().unwrap();

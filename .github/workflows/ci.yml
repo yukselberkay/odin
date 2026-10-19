@@ -6,7 +6,7 @@ jobs:
   verify:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -17,4 +17,6 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: cargo build --locked --release
-      - run: python3 scripts/pty_smoke.py target/release/odin
+      # The smoke test drives a Unix pseudo-terminal.
+      - if: runner.os != 'Windows'
+        run: python3 scripts/pty_smoke.py target/release/odin

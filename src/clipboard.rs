@@ -66,6 +66,30 @@ fn tools(copy: bool) -> Vec<(&'static str, &'static [&'static str])> {
             ("pbpaste", &[][..])
         });
     }
+    if cfg!(windows) {
+        // PowerShell handles Unicode both ways (clip.exe would mangle it).
+        tools.push(if copy {
+            (
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[Console]::InputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+                ][..],
+            )
+        } else {
+            (
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw",
+                ][..],
+            )
+        });
+    }
     tools
 }
 
@@ -112,10 +136,20 @@ fn system_paste() -> Option<String> {
             let _ = send.send(bytes);
         });
         // Never let a stuck clipboard owner freeze the editor.
-        let bytes = receive.recv_timeout(Duration::from_millis(500));
+        // PowerShell starts slowly; others answer at once.
+        let limit = if cfg!(windows) { 3000 } else { 500 };
+        let bytes = receive.recv_timeout(Duration::from_millis(limit));
         let _ = child.kill();
         let _ = child.wait();
-        let ok = bytes.ok().and_then(|b| String::from_utf8(b).ok());
+        let mut ok = bytes.ok().and_then(|b| String::from_utf8(b).ok());
+        // PowerShell ends its output with a newline that is not part of the clipboard.
+        if cfg!(windows) {
+            if let Some(text) = &mut ok {
+                if text.ends_with("\r\n") {
+                    text.truncate(text.len() - 2);
+                }
+            }
+        }
         if ok.is_some() {
             return ok;
         }

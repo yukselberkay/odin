@@ -569,6 +569,7 @@ mod tests {
         assert!(b.save(None).is_err());
         assert_eq!(fs::read_to_string(path).unwrap(), "external");
     }
+    #[cfg(unix)]
     #[test]
     fn atomic_save_preserves_permissions_and_new_destination() {
         use std::os::unix::fs::PermissionsExt;

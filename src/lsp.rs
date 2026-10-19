@@ -123,17 +123,30 @@ fn install_hint(key: &str) -> &'static str {
 }
 
 pub(crate) fn on_path(program: &str) -> bool {
-    if program.contains('/') {
-        return Path::new(program).is_file();
-    }
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    crate::platform::which(program).is_some()
 }
 
 pub fn uri(path: &Path) -> String {
+    file_uri(&path.to_string_lossy(), cfg!(windows))
+}
+
+/// `/a b/c.rs` → `file:///a%20b/c.rs`; on Windows `C:\x\y.rs` → `file:///C:/x/y.rs`.
+fn file_uri(path: &str, windows: bool) -> String {
+    let path = if windows {
+        let forward = path.replace('\\', "/");
+        if forward.starts_with('/') {
+            forward
+        } else {
+            format!("/{forward}")
+        }
+    } else {
+        path.to_string()
+    };
     let mut out = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-_.~".contains(&byte) {
+    for (i, byte) in path.bytes().enumerate() {
+        // Keep the drive colon readable: file:///C:/…
+        let drive_colon = windows && i == 2 && byte == b':';
+        if byte.is_ascii_alphanumeric() || b"/-_.~".contains(&byte) || drive_colon {
             out.push(byte as char);
         } else {
             out.push_str(&format!("%{byte:02X}"));
@@ -143,6 +156,10 @@ pub fn uri(path: &Path) -> String {
 }
 
 pub fn path_from_uri(uri: &str) -> Option<PathBuf> {
+    path_from_file_uri(uri, cfg!(windows))
+}
+
+fn path_from_file_uri(uri: &str, windows: bool) -> Option<PathBuf> {
     let encoded = uri.strip_prefix("file://")?;
     let bytes = encoded.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -158,7 +175,15 @@ pub fn path_from_uri(uri: &str) -> Option<PathBuf> {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8(out).ok().map(PathBuf::from)
+    let mut path = String::from_utf8(out).ok()?;
+    if windows {
+        // `/C:/x/y.rs` → `C:\x\y.rs`
+        if path.as_bytes().get(2) == Some(&b':') {
+            path.remove(0);
+        }
+        path = path.replace('/', "\\");
+    }
+    Some(PathBuf::from(path))
 }
 
 /// Char column → LSP `character` (UTF-16 units unless the server chose UTF-32).
@@ -206,7 +231,7 @@ struct Client {
 
 impl Client {
     fn spawn(program: &str, args: &[String], root: &Path) -> Result<Self> {
-        let mut child = Command::new(program)
+        let mut child = Command::new(crate::platform::resolve(program))
             .args(args)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -972,7 +997,7 @@ fn strip_snippet(text: &str) -> String {
 }
 
 /// A scripted server (Python) exercises the whole protocol path end to end.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) const FAKE_SERVER: &str = r#"
 import json, sys
 def send(msg):
@@ -1024,6 +1049,22 @@ mod tests {
     }
 
     #[test]
+    fn windows_paths_become_drive_letter_uris_and_back() {
+        let uri = file_uri("C:\\Users\\me\\My Code\\main.rs", true);
+        assert_eq!(uri, "file:///C:/Users/me/My%20Code/main.rs");
+        assert_eq!(
+            path_from_file_uri(&uri, true).unwrap(),
+            PathBuf::from("C:\\Users\\me\\My Code\\main.rs")
+        );
+        // Servers may percent-encode the colon.
+        assert_eq!(
+            path_from_file_uri("file:///c%3A/src/a.rs", true).unwrap(),
+            PathBuf::from("c:\\src\\a.rs")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn uris_round_trip_paths_with_spaces() {
         let path = Path::new("/home/me/Telegram Desktop/main.rs");
         let uri = uri(path);
@@ -1053,6 +1094,8 @@ mod tests {
         assert!(language(Path::new("a.md")).is_none());
     }
 
+    // Windows may resolve `python3` to a Store placeholder; the protocol is the same.
+    #[cfg(unix)]
     #[test]
     fn talks_to_a_server_end_to_end() {
         if !on_path("python3") {

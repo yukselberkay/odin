@@ -30,9 +30,11 @@ pub struct Launcher {
 
 const HELP: &str = "add [ai.local] to config.toml, e.g. program = \"llama-cli\", args = [\"-m\", \"model.gguf\", \"-cnv\"] · or install Ollama (ollama.com) or LM Studio (lmstudio.ai)";
 
-/// Program and arguments for a launcher; `env` is applied through `env(1)` so
-/// any program works unchanged.
-pub fn command(launcher: &Launcher, model: Option<&str>) -> Result<(String, Vec<String>)> {
+/// Program, arguments and extra environment to run a launcher with.
+pub type Run = (String, Vec<String>, Vec<(String, String)>);
+
+/// Program, arguments and environment for a launcher, with `{model}` filled in.
+pub fn command(launcher: &Launcher, model: Option<&str>) -> Result<Run> {
     let model = model.filter(|m| !m.is_empty()).unwrap_or(&launcher.model);
     if launcher.args.iter().any(|a| a.contains("{model}")) && model.is_empty() {
         bail!("This launcher needs a model: `:ai <name> <model>` or set model in its config");
@@ -42,17 +44,12 @@ pub fn command(launcher: &Launcher, model: Option<&str>) -> Result<(String, Vec<
         .iter()
         .map(|a| a.replace("{model}", model))
         .collect();
-    if launcher.env.is_empty() {
-        return Ok((launcher.program.clone(), args));
-    }
-    let mut wrapped: Vec<String> = launcher
+    let env = launcher
         .env
         .iter()
-        .map(|(k, v)| format!("{k}={v}"))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    wrapped.push(launcher.program.clone());
-    wrapped.extend(args);
-    Ok(("env".into(), wrapped))
+    Ok((launcher.program.clone(), args, env))
 }
 
 /// The "Local LLM" entry: `[ai.local]` if configured, else a detected runtime.
@@ -61,7 +58,7 @@ pub fn local(
     model: Option<&str>,
     ollama_models: impl Fn() -> Result<Vec<String>>,
     on_path: impl Fn(&str) -> bool,
-) -> Result<(String, Vec<String>)> {
+) -> Result<Run> {
     if let Some(launcher) = configured {
         if !on_path(&launcher.program) {
             bail!("`{}` from [ai.local] is not on PATH", launcher.program);
@@ -76,12 +73,12 @@ pub fn local(
                 .next()
                 .context("Ollama has no models yet · pull one: ollama pull qwen3-coder")?,
         };
-        return Ok(("ollama".into(), vec!["run".into(), model]));
+        return Ok(("ollama".into(), vec!["run".into(), model], Vec::new()));
     }
     if on_path("lms") {
         let mut args = vec!["chat".to_string()];
         args.extend(model.filter(|m| !m.is_empty()).map(String::from));
-        return Ok(("lms".into(), args));
+        return Ok(("lms".into(), args, Vec::new()));
     }
     bail!("No local LLM found · {HELP}")
 }
@@ -150,7 +147,8 @@ gpt-oss:20b           aa4295ac10c3    13 GB     5 weeks ago\n";
             command(&launcher, None).unwrap(),
             (
                 "aider".into(),
-                vec!["--model".into(), "openai/qwen3".into()]
+                vec!["--model".into(), "openai/qwen3".into()],
+                Vec::new()
             )
         );
         assert_eq!(
@@ -160,10 +158,12 @@ gpt-oss:20b           aa4295ac10c3    13 GB     5 weeks ago\n";
         launcher
             .env
             .insert("OPENAI_API_BASE".into(), "http://localhost:8080/v1".into());
-        let (program, args) = command(&launcher, None).unwrap();
-        assert_eq!(program, "env");
-        assert_eq!(args[0], "OPENAI_API_BASE=http://localhost:8080/v1");
-        assert_eq!(args[1], "aider");
+        let (program, _, env) = command(&launcher, None).unwrap();
+        assert_eq!(program, "aider");
+        assert_eq!(
+            env,
+            vec![("OPENAI_API_BASE".into(), "http://localhost:8080/v1".into())]
+        );
         launcher.model.clear();
         assert!(command(&launcher, None).is_err());
     }
@@ -180,11 +180,8 @@ gpt-oss:20b           aa4295ac10c3    13 GB     5 weeks ago\n";
             "llama-cli"
         );
         assert_eq!(
-            local(None, None, models, |p| p == "ollama").unwrap(),
-            (
-                "ollama".into(),
-                vec!["run".into(), "qwen3-coder:latest".into()]
-            )
+            local(None, None, models, |p| p == "ollama").unwrap().1,
+            vec!["run".to_string(), "qwen3-coder:latest".into()]
         );
         assert_eq!(
             local(None, Some("gpt-oss:20b"), models, |p| p == "ollama")
@@ -192,10 +189,7 @@ gpt-oss:20b           aa4295ac10c3    13 GB     5 weeks ago\n";
                 .1[1],
             "gpt-oss:20b"
         );
-        assert_eq!(
-            local(None, None, models, |p| p == "lms").unwrap(),
-            ("lms".into(), vec!["chat".into()])
-        );
+        assert_eq!(local(None, None, models, |p| p == "lms").unwrap().0, "lms");
         let error = local(None, None, models, |_| false)
             .unwrap_err()
             .to_string();

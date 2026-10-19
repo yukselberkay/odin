@@ -400,21 +400,24 @@ impl App {
         program: Option<(&str, Vec<String>)>,
         split: Option<Axis>,
     ) -> Result<()> {
+        self.open_terminal_with(program, &[], split)
+    }
+    fn open_terminal_with(
+        &mut self,
+        program: Option<(&str, Vec<String>)>,
+        env: &[(String, String)],
+        split: Option<Axis>,
+    ) -> Result<()> {
         if split.is_some() && self.panes.len() >= 12 {
             bail!("Maximum of 12 panes; close one first");
         }
-        let shell = self
-            .config
-            .shell
-            .clone()
-            .or_else(|| std::env::var("SHELL").ok())
-            .unwrap_or_else(|| "/bin/sh".into());
-        let (program, args) = program.unwrap_or((&shell, vec!["-i".into()]));
+        let (shell, shell_args) = crate::platform::shell(self.config.shell.as_deref());
+        let (program, args) = program.unwrap_or((&shell, shell_args));
         let label = Path::new(program)
-            .file_name()
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(program);
-        let terminal = TerminalPane::spawn(program, &args, &self.root, label, &self.theme)?;
+        let terminal = TerminalPane::spawn(program, &args, env, &self.root, label, &self.theme)?;
         if let Some(axis) = split {
             self.add_pane(Pane::Terminal(terminal), axis);
         } else {
@@ -1671,21 +1674,21 @@ impl App {
     fn launch(&mut self, program: &str, model: Option<&str>, split: Option<Axis>) -> Result<()> {
         use crate::local_ai;
         if program == "local" {
-            let (program, args) = local_ai::local(
+            let (program, args, env) = local_ai::local(
                 self.config.ai.get("local"),
                 model,
                 local_ai::ollama_models,
                 crate::lsp::on_path,
             )?;
-            return self.open_terminal(Some((&program, args)), split);
+            return self.open_terminal_with(Some((&program, args)), &env, split);
         }
         // An [ai.<name>] entry, which may also override a built-in like `codex`.
         if let Some(launcher) = self.config.ai.get(program).cloned() {
             if !crate::lsp::on_path(&launcher.program) {
                 bail!("`{}` from [ai.{program}] is not on PATH", launcher.program);
             }
-            let (program, args) = local_ai::command(&launcher, model)?;
-            return self.open_terminal(Some((&program, args)), split);
+            let (program, args, env) = local_ai::command(&launcher, model)?;
+            return self.open_terminal_with(Some((&program, args)), &env, split);
         }
         let (_, _, name, hint) = AGENTS.iter().find(|a| a.1 == program).copied().unwrap_or((
             ' ',
@@ -2160,6 +2163,7 @@ mod tests {
         app.event(Event::Paste("!".into()));
         assert!(text(&mut app).starts_with("!Zbeta") || text(&mut app).starts_with("Z!beta"));
     }
+    #[cfg(unix)]
     #[test]
     fn lsp_diagnostics_completion_menu_and_format_through_the_app() {
         if std::process::Command::new("python3")
@@ -2442,6 +2446,7 @@ mod tests {
             }
         }
     }
+    #[cfg(unix)]
     #[test]
     fn your_own_ai_launchers_from_config_run_in_ai_panes() {
         let dir = tempfile::tempdir().unwrap();
@@ -2477,7 +2482,7 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert!(matches!(app.panes.get(&app.focused), Some(Pane::Ai)));
         press(&mut app, KeyCode::Char('6'), KeyModifiers::NONE);
         assert_eq!(terminals(&app), 2);
-        assert!(matches!(app.panes.get(&app.focused), Some(Pane::Terminal(t)) if t.title == "env"));
+        assert!(matches!(app.panes.get(&app.focused), Some(Pane::Terminal(t)) if t.title == "sh"));
         // Unknown names and missing programs explain themselves.
         assert!(app.command("ai nosuch").is_err());
         app.config.ai.get_mut("llamacpp").unwrap().program = "odin-no-such-llm".into();

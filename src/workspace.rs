@@ -286,7 +286,7 @@ pub fn refresh_git(root: PathBuf) -> Receiver<GitInfo> {
     receiver
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     #[test]

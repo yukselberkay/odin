@@ -212,3 +212,17 @@ published.
   substitution). Ollama and LM Studio are not installed on the test host, so their
   detection is covered by unit tests rather than a live model.
 - `cargo test --locked --all-targets`: **57 passed**.
+
+## Windows support
+
+- New `src/platform.rs` holds the OS differences: executable lookup with PATHEXT (so
+  npm `.cmd` shims resolve), the default shell (PowerShell → Windows PowerShell →
+  `cmd.exe`; `$SHELL -i` → `/bin/sh -i` on Unix) and the config base (`%APPDATA%` on
+  Windows, `~/.config` elsewhere, `$XDG_CONFIG_HOME` everywhere).
+- Terminals, LSP servers and AI CLIs launch resolved paths; launcher `env` is passed to
+  the PTY directly (no `env(1)`). LSP URIs use `file:///C:/…` on Windows. The clipboard
+  uses PowerShell `Set-Clipboard`/`Get-Clipboard` with UTF-8.
+- Unix-only tests (permissions, symlinks, `/bin/sh`, Python fake servers) are gated.
+- Verified here with `cargo clippy --target x86_64-pc-windows-gnu --all-targets
+  -D warnings` (clean); no Windows machine or linker was available, so the new
+  `windows-latest` CI job is the first real Windows build and test run.

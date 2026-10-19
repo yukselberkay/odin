@@ -9,6 +9,7 @@ mod local_ai;
 mod lsp;
 mod markdown;
 mod omarchy;
+mod platform;
 mod terminal;
 mod ui;
 mod vscode;

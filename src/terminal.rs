@@ -28,6 +28,7 @@ impl TerminalPane {
     pub fn spawn(
         program: &str,
         args: &[String],
+        env: &[(String, String)],
         root: &Path,
         title: &str,
         theme: &Theme,
@@ -38,12 +39,16 @@ impl TerminalPane {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let mut command = CommandBuilder::new(program);
+        // A full path lets Windows run `.cmd` shims (npm-installed CLIs) too.
+        let mut command = CommandBuilder::new(crate::platform::resolve(program));
         command.args(args);
         command.cwd(root);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("ODIN", "1");
+        for (key, value) in env {
+            command.env(key, value);
+        }
         // Disable inherited multiplexer identities: this is a fresh terminal.
         command.env_remove("TMUX");
         command.env_remove("STY");
@@ -383,6 +388,7 @@ mod tests {
             "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\"
         );
     }
+    #[cfg(unix)]
     #[test]
     fn real_pty_receives_input_and_resizes() {
         let mut terminal = TerminalPane::spawn(
@@ -391,6 +397,7 @@ mod tests {
                 "-c".into(),
                 "read value; printf 'received:%s' \"$value\"".into(),
             ],
+            &[],
             Path::new("/tmp"),
             "test",
             &Theme::default(),

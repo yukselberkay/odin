@@ -26,7 +26,8 @@ No Electron, no web service, no account required by Odin, no telemetry.
 
 ### 1. Prerequisites
 
-Odin targets **Linux and macOS**, not Windows. You need:
+Odin runs on **Linux, macOS and Windows 10/11** (see [Windows](#windows) for the
+Windows specifics). You need:
 
 - Rust **1.88 or newer** and Cargo. Current stable Rust is recommended.
 - A C compiler/linker and platform development headers.
@@ -66,6 +67,26 @@ git --version
 ```
 
 If Rust is already installed but too old, use `rustup update stable`.
+
+### Windows
+
+1. Install Rust with [rustup-init.exe](https://rustup.rs/) and accept the default
+   (MSVC) toolchain; when asked, let it install the Visual Studio C++ Build Tools.
+2. Install [Git for Windows](https://git-scm.com/download/win).
+3. Use **Windows Terminal** (built into Windows 11) for true color and full key
+   support. For explorer icons, set a [Nerd Font](https://www.nerdfonts.com/) in its
+   profile, or put `icons = false` in Odin's config.
+
+Then build and install from PowerShell exactly as below (`cargo build --release
+--locked`, `cargo install --path . --locked`); the binary is `odin.exe` in
+`%USERPROFILE%\.cargo\bin`, which rustup adds to `PATH`.
+
+On Windows, terminal panes start **PowerShell** (`pwsh`, else Windows PowerShell,
+else `cmd.exe`; override with `shell = "…"`), configuration lives in
+**`%APPDATA%\odin\config.toml`** (themes in `%APPDATA%\odin\themes`), and the clipboard
+goes through PowerShell's `Get-Clipboard` / `Set-Clipboard`. CLIs installed with npm
+(`codex`, `gemini`, `pyright-langserver`, …) are found through their `.cmd` shims.
+Omarchy themes are Linux-only and simply do not appear.
 
 ### 2. Get the source and build
 
@@ -533,8 +554,9 @@ itself. A missing CLI produces a visible error without destroying a pane.
 
 ## Themes and command plugins
 
-Configuration lives at `~/.config/odin/config.toml` on both Linux and macOS,
-or `$XDG_CONFIG_HOME/odin/config.toml`. See [config.example.toml](config.example.toml).
+Configuration lives at `~/.config/odin/config.toml` on Linux and macOS,
+`%APPDATA%\odin\config.toml` on Windows, or `$XDG_CONFIG_HOME/odin/config.toml` when
+that is set. See [config.example.toml](config.example.toml).
 Odin never loads configuration or executable plugins from the project being opened.
 
 ### Bundled dark themes
@@ -716,8 +738,8 @@ cc -std=c11 -Wall -Wextra -Werror examples/forge.c -o target/forge
 ./target/forge
 ```
 
-CI is configured for Linux and macOS. The local implementation was exercised on
-Linux; a macOS runner is still needed to confirm platform-specific behavior.
+CI runs format, lint, tests and a release build on Linux, macOS and Windows (the PTY
+smoke test is Unix-only). Day-to-day use and manual verification happen on Linux.
 See [docs/VERIFICATION.md](docs/VERIFICATION.md) for the actual validation record.
 
 MIT licensed.

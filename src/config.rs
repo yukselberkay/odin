@@ -149,12 +149,9 @@ impl Default for Config {
 }
 
 pub fn config_dir() -> PathBuf {
-    // Follow XDG on both platforms. Config is user-owned, never project-owned.
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| directories::BaseDirs::new().map(|d| d.home_dir().join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("odin")
+    // XDG on Linux and macOS, %APPDATA% on Windows. Config is user-owned, never
+    // project-owned.
+    crate::platform::config_base().join("odin")
 }
 
 impl Config {

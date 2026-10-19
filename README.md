@@ -188,9 +188,12 @@ Uninstalling does not remove your projects or user configuration.
 8. **Exit:** `Ctrl-q` or `:qa` refuses to exit with unsaved changes. Use `:wa` to
    save modified named buffers first. `:qa!` explicitly discards changes and exits.
 
-Press **F1** for the built-in field guide. It docks on the right and stays open while
-you keep typing commands and editing, so you can follow it step by step; **F1** again
-(or `:help`) closes it and **Alt-↑/↓** scrolls it. Editor commands
+Press **F1** for the built-in field guide. It docks on the right and opens focused:
+**↑/↓**, `j`/`k`, **PageUp/PageDown**, Space and `g`/`G` scroll it, with no modifier
+keys (Alt-↑/↓ also works where Alt is free). **Esc** returns to your work while the
+guide stays open, so you can follow it step by step as you type commands and edit;
+any other key also goes straight to your work. **F1** focuses the open guide again,
+and F1 on a focused guide (or `:help`) closes it. Editor commands
 such as `:w` are entered in Odin, not the shell. While a terminal is focused,
 use **Ctrl-b then `:`** to open Odin's command prompt.
 
@@ -302,7 +305,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b PageUp` / `PageDown` | Terminal scrollback |
 | `Ctrl-b b` | Send literal Ctrl-b to the terminal |
 | `Ctrl-b :` | Command prompt, including from terminal panes |
-| `F1` | Field guide beside your work (toggle); Alt-↑/↓ scrolls it |
+| `F1` | Field guide beside your work, focused: ↑/↓ PgUp/PgDn scroll, Esc back to work (stays open); F1 refocuses / closes |
 
 `Ctrl-q`, `Ctrl-e`, `Ctrl-p`, F1 and the Ctrl-b prefix are reserved by Odin even
 inside a terminal. Other ordinary terminal keys go to the child CLI; Escape alone

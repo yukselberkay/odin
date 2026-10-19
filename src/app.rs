@@ -141,6 +141,8 @@ pub struct App {
     pub error: bool,
     /// The F1 field guide, docked beside the panes while you keep working.
     pub help: bool,
+    /// The guide has the keyboard: plain arrows and paging keys scroll it.
+    pub help_focus: bool,
     pub help_scroll: usize,
     pub zoom: bool,
     pub running: bool,
@@ -211,6 +213,7 @@ impl App {
             message: "Welcome to Odin. F1 opens the field guide.".into(),
             error: false,
             help: false,
+            help_focus: false,
             help_scroll: 0,
             zoom: false,
             running: true,
@@ -860,10 +863,37 @@ impl App {
     }
     fn key(&mut self, key: KeyEvent) -> Result<()> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        // F1 toggles the guide from anywhere; everything else keeps working while it is open.
+        // F1 opens the guide focused, refocuses an open one, and closes a focused one.
+        // Everything else keeps working while it is open.
         if key.code == KeyCode::F(1) {
-            self.toggle_help();
+            if self.help && !self.help_focus {
+                self.help_focus = true;
+                self.notice("Guide focused · ↑↓ PgUp PgDn scroll · Esc back to work · F1 closes");
+            } else {
+                self.toggle_help();
+            }
             return Ok(());
+        }
+        // A focused guide scrolls with plain keys (Alt is often taken on macOS); any
+        // other key goes back to your work and does its usual job.
+        if self.help && self.help_focus && !ctrl {
+            let step = match key.code {
+                KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                KeyCode::Down | KeyCode::Char('j') => Some(1),
+                KeyCode::PageUp | KeyCode::Char('b') => Some(-10),
+                KeyCode::PageDown | KeyCode::Char(' ') => Some(10),
+                KeyCode::Home | KeyCode::Char('g') => Some(isize::MIN / 2),
+                KeyCode::End | KeyCode::Char('G') => Some(isize::MAX / 2),
+                _ => None,
+            };
+            if let Some(step) = step {
+                self.help_scroll = self.help_scroll.saturating_add_signed(step);
+                return Ok(());
+            }
+            self.help_focus = false;
+            if matches!(key.code, KeyCode::Esc | KeyCode::Tab) {
+                return Ok(());
+            }
         }
         if self.help && key.modifiers.contains(KeyModifiers::ALT) {
             let step = match key.code {
@@ -2059,9 +2089,12 @@ impl App {
     }
     fn toggle_help(&mut self) {
         self.help = !self.help;
+        self.help_focus = self.help;
         self.help_scroll = 0;
         if self.help {
-            self.notice("Field guide open beside your work · F1 closes · Alt-↑↓ scrolls");
+            self.notice(
+                "Field guide · ↑↓ PgUp PgDn scroll · Esc back to work (it stays open) · F1 closes",
+            );
         }
     }
     pub fn open_picker(&mut self) {
@@ -2725,7 +2758,16 @@ mod tests {
         std::fs::write(&path, "hello\n").unwrap();
         let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
         press(&mut app, KeyCode::F(1), KeyModifiers::NONE);
-        assert!(app.help);
+        assert!(app.help && app.help_focus);
+        // Focused, the guide scrolls with plain keys — no Alt needed on macOS.
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(app.help_scroll, 2);
+        press(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+        assert_eq!(app.help_scroll, 1);
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(app.help_scroll, 0);
+        assert_eq!(app.active_buffer().unwrap().line(0), "hello", "no edits");
         // A command typed with the guide open runs, and the guide stays.
         press(&mut app, KeyCode::Char(':'), KeyModifiers::NONE);
         for c in "theme nord".chars() {
@@ -2755,6 +2797,15 @@ mod tests {
         assert!(screen.contains("FIELD GUIDE"));
         assert!(screen.contains("a.txt"), "editor pane still visible");
         assert_eq!(app.help_scroll, 1);
+        assert!(!app.help_focus, "typing went back to work");
+        // Esc leaves a focused guide open; F1 refocuses it, then closes it.
+        press(&mut app, KeyCode::F(1), KeyModifiers::NONE);
+        assert!(app.help && app.help_focus);
+        press(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(app.help_scroll, 11);
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.help && !app.help_focus);
+        press(&mut app, KeyCode::F(1), KeyModifiers::NONE);
         press(&mut app, KeyCode::F(1), KeyModifiers::NONE);
         assert!(!app.help);
     }

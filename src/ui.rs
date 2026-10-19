@@ -1500,6 +1500,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let mode = if app.prefix {
         "PREFIX"
+    } else if app.help && app.help_focus {
+        "GUIDE"
     } else if app.sidebar_focus {
         if app.git_focus {
             "GIT"
@@ -1614,12 +1616,17 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         Block::default().style(Style::default().bg(color(&theme.background))),
         rect,
     );
-    let title = if rect.width >= 46 {
-        " FIELD GUIDE · F1 closes · Alt-↑↓ scrolls "
+    let title = if rect.width >= 52 {
+        if app.help_focus {
+            " FIELD GUIDE · ↑↓ scroll · Esc back · F1 closes "
+        } else {
+            " FIELD GUIDE · F1 to scroll · F1 F1 closes "
+        }
     } else {
         " GUIDE · F1 closes "
     };
-    let block = panel(title, theme, false).title_style(Style::default().fg(color(&theme.accent)));
+    let block =
+        panel(title, theme, app.help_focus).title_style(Style::default().fg(color(&theme.accent)));
     let inner = block.inner(rect);
     let rows = [
         ("THEMES", "Pick visually — no names to remember"),
@@ -1801,7 +1808,12 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         block.title_bottom(
             Line::styled(
                 format!(
-                    " {arrows} more · Alt-↑↓ · {}% ",
+                    " {arrows} more · {} · {}% ",
+                    if app.help_focus {
+                        "↑↓ PgDn"
+                    } else {
+                        "F1 then ↑↓"
+                    },
                     app.help_scroll * 100 / max
                 ),
                 Style::default().fg(color(&theme.accent)),

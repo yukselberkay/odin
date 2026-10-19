@@ -603,7 +603,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         text(
             frame,
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-            " ↑↓ browse  → open  . hidden",
+            " ↑↓ move  → open  . hidden",
             color(&theme.muted),
         );
     }

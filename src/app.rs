@@ -24,7 +24,7 @@ use std::{
 pub enum Pane {
     Editor(usize),
     Preview(Preview),
-    Terminal(TerminalPane),
+    Terminal(Box<TerminalPane>),
     Ai,
     /// Branches, commit graph and commit details (`:git`, Ctrl-b G).
     Git(Box<GitView>),
@@ -119,6 +119,86 @@ pub struct Menu {
     pub row: usize,
     /// Column where the word being completed starts.
     pub start: usize,
+}
+
+/// How to start an AI CLI pane.
+struct AgentRun {
+    run: crate::local_ai::Run,
+    /// Show the pane's saved output: the CLI will not redraw its conversation.
+    replay: bool,
+    /// The conversation id the pane is pinned to (Claude Code).
+    session: Option<String>,
+}
+
+/// Flags for a built-in AI CLI: (args, replay saved output, pinned conversation id).
+fn agent_flags(
+    program: &str,
+    resume: bool,
+    session: Option<&str>,
+    exists: &dyn Fn(&str) -> bool,
+    new_id: &dyn Fn() -> String,
+) -> (Vec<String>, bool, Option<String>) {
+    let words = |w: &[&str]| w.iter().map(|f| f.to_string()).collect::<Vec<_>>();
+    match (program, resume, session) {
+        ("claude", true, Some(id)) if exists(id) => {
+            (words(&["--resume", id]), false, Some(id.to_string()))
+        }
+        // A session saved before panes had ids: let you pick, never guess.
+        ("claude", true, None) => (words(&["--resume"]), true, None),
+        // New pane, or a pinned conversation that never got a message.
+        ("claude", _, id) => {
+            let id = id.map_or_else(new_id, String::from);
+            (words(&["--session-id", &id]), true, Some(id))
+        }
+        ("codex", true, _) => (words(&["resume", "--last"]), false, None),
+        ("gemini", true, _) => (words(&["--resume", "latest"]), false, None),
+        ("agy", true, _) => (words(&["--continue"]), false, None),
+        _ => (Vec::new(), true, None),
+    }
+}
+
+/// A random (version 4) UUID for a new conversation id, from std's per-process
+/// random hasher keys.
+fn conversation_id() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut bytes = [0u8; 16];
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    for (i, chunk) in bytes.chunks_mut(8).enumerate() {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(nanos);
+        hasher.write_usize(i);
+        hasher.write_u32(std::process::id());
+        chunk.copy_from_slice(&hasher.finish().to_le_bytes());
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
+/// Whether Claude Code recorded conversation `id` (it does on the first message):
+/// `<config>/projects/<project>/<id>.jsonl`, config being `$CLAUDE_CONFIG_DIR` or
+/// `~/.claude`.
+fn claude_conversation_exists(id: &str) -> bool {
+    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude")));
+    let Some(Ok(projects)) = base.map(|b| std::fs::read_dir(b.join("projects"))) else {
+        return false;
+    };
+    let file = format!("{id}.jsonl");
+    projects
+        .flatten()
+        .any(|project| project.path().join(&file).is_file())
 }
 
 pub struct App {
@@ -436,9 +516,10 @@ impl App {
         let terminal =
             TerminalPane::spawn(program, &args, env, &self.root, label, &self.theme, &[])?;
         if let Some(axis) = split {
-            self.add_pane(Pane::Terminal(terminal), axis);
+            self.add_pane(Pane::Terminal(Box::new(terminal)), axis);
         } else {
-            self.panes.insert(self.focused, Pane::Terminal(terminal));
+            self.panes
+                .insert(self.focused, Pane::Terminal(Box::new(terminal)));
         }
         self.sidebar_focus = false;
         self.mode = Mode::Normal;
@@ -637,7 +718,7 @@ impl App {
                     cwd,
                     transcript,
                 } => match self.restore_terminal(launch, cwd, &transcript) {
-                    Ok(terminal) => Pane::Terminal(terminal),
+                    Ok(terminal) => Pane::Terminal(Box::new(terminal)),
                     Err(error) => {
                         problems.push(format!("{error:#}"));
                         Pane::Ai
@@ -686,13 +767,26 @@ impl App {
             );
         }
         let agent = match &launch {
-            Launch::Agent { name, model } => self.agent_command(name, model.as_deref(), true).ok(),
+            Launch::Agent {
+                name,
+                model,
+                session,
+            } => self
+                .agent_command(name, model.as_deref(), session.as_deref(), true)
+                .ok()
+                .map(|agent| (agent, name.clone(), model.clone())),
             _ => None,
         };
         let (program, args, env, launch, history) = match agent {
-            // A resumed CLI redraws its own conversation; don't show it twice.
-            Some(((program, args, env), resumed)) => {
-                let history = if resumed { Vec::new() } else { history };
+            // A CLI that reopens its conversation redraws it; don't show it twice.
+            Some((agent, name, model)) => {
+                let (program, args, env) = agent.run;
+                let history = if agent.replay { history } else { Vec::new() };
+                let launch = Launch::Agent {
+                    name,
+                    model,
+                    session: agent.session,
+                };
                 (program, args, env, launch, history)
             }
             None => {
@@ -2033,40 +2127,49 @@ impl App {
             .collect()
     }
     fn launch(&mut self, program: &str, model: Option<&str>, split: Option<Axis>) -> Result<()> {
-        let ((command, args, env), _) = self.agent_command(program, model, false)?;
+        let agent = self.agent_command(program, model, None, false)?;
+        let (command, args, env) = agent.run;
         self.open_terminal_with(Some((&command, args)), &env, split)?;
         if let Some(Pane::Terminal(t)) = self.panes.get_mut(&self.focused) {
             t.launch = Launch::Agent {
                 name: program.into(),
                 model: model.map(String::from),
+                session: agent.session,
             };
         }
         Ok(())
     }
-    /// What to run for an AI CLI: (program, args, env, resumed). With `resume`, the
-    /// built-in CLIs reopen their latest conversation in this project.
+    /// What to run for an AI CLI. Claude Code panes get their own conversation id
+    /// (`--session-id`), so a restored pane reopens exactly its own conversation
+    /// with `--resume <id>`; the other built-in CLIs can only reopen their latest
+    /// conversation in this project.
     fn agent_command(
         &self,
         program: &str,
         model: Option<&str>,
+        session: Option<&str>,
         resume: bool,
-    ) -> Result<(crate::local_ai::Run, bool)> {
+    ) -> Result<AgentRun> {
         use crate::local_ai;
+        let plain = |run| AgentRun {
+            run,
+            replay: true,
+            session: None,
+        };
         if program == "local" {
-            let (program, args, env) = local_ai::local(
+            return Ok(plain(local_ai::local(
                 self.config.ai.get("local"),
                 model,
                 local_ai::ollama_models,
                 crate::lsp::on_path,
-            )?;
-            return Ok(((program, args, env), false));
+            )?));
         }
         // An [ai.<name>] entry, which may also override a built-in like `codex`.
         if let Some(launcher) = self.config.ai.get(program).cloned() {
             if !crate::lsp::on_path(&launcher.program) {
                 bail!("`{}` from [ai.{program}] is not on PATH", launcher.program);
             }
-            return Ok((local_ai::command(&launcher, model)?, false));
+            return Ok(plain(local_ai::command(&launcher, model)?));
         }
         let (_, _, name, hint) = AGENTS.iter().find(|a| a.1 == program).copied().unwrap_or((
             ' ',
@@ -2077,15 +2180,18 @@ impl App {
         if !crate::lsp::on_path(program) {
             bail!("{name} is not installed (`{program}` not on PATH) · install: {hint}");
         }
-        let continue_flags: &[&str] = match program {
-            "claude" | "agy" => &["--continue"],
-            "codex" => &["resume", "--last"],
-            "gemini" => &["--resume", "latest"],
-            _ => &[],
-        };
-        let flags = if resume { continue_flags } else { &[] };
-        let args = flags.iter().map(|f| f.to_string()).collect();
-        Ok(((program.into(), args, Vec::new()), !flags.is_empty()))
+        let (args, replay, session) = agent_flags(
+            program,
+            resume,
+            session,
+            &claude_conversation_exists,
+            &conversation_id,
+        );
+        Ok(AgentRun {
+            run: (program.into(), args, Vec::new()),
+            replay,
+            session,
+        })
     }
     fn toggle_help(&mut self) {
         self.help = !self.help;
@@ -3242,5 +3348,42 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         }
         let ignore = std::fs::read_to_string(dir.path().join(".odin/.gitignore")).unwrap();
         assert!(ignore.contains('*'));
+    }
+    #[test]
+    fn claude_panes_reopen_exactly_their_own_conversation() {
+        let new_id = || "11111111-2222-4333-8444-555555555555".to_string();
+        let yes = |_: &str| true;
+        let no = |_: &str| false;
+        let id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        // A new Claude pane is pinned to a fresh conversation id.
+        let (args, replay, session) = agent_flags("claude", false, None, &no, &new_id);
+        assert_eq!(args, ["--session-id", &new_id()]);
+        assert!(replay);
+        assert_eq!(session.as_deref(), Some(new_id().as_str()));
+        // Restored: that exact conversation, never "the latest in this folder".
+        let (args, replay, session) = agent_flags("claude", true, Some(id), &yes, &new_id);
+        assert_eq!(args, ["--resume", id]);
+        assert!(!replay, "Claude redraws the conversation itself");
+        assert_eq!(session.as_deref(), Some(id));
+        // Pinned but never used: start it under the same id, below the old output.
+        let (args, replay, _) = agent_flags("claude", true, Some(id), &no, &new_id);
+        assert_eq!(args, ["--session-id", id]);
+        assert!(replay);
+        // Saved before ids existed: ask, with the old output shown.
+        let (args, replay, session) = agent_flags("claude", true, None, &no, &new_id);
+        assert_eq!(args, ["--resume"]);
+        assert!(replay && session.is_none());
+        assert!(!args.contains(&"--continue".to_string()));
+        // CLIs that can't be pinned reopen their latest conversation here.
+        assert_eq!(
+            agent_flags("codex", true, None, &no, &new_id).0,
+            ["resume", "--last"]
+        );
+        assert!(agent_flags("codex", false, None, &no, &new_id).0.is_empty());
+        let a = conversation_id();
+        let b = conversation_id();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36);
+        assert_eq!(&a[14..15], "4", "version 4 UUID");
     }
 }

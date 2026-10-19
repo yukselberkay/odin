@@ -21,6 +21,10 @@ pub enum Launch {
     Agent {
         name: String,
         model: Option<String>,
+        /// Conversation id the pane is pinned to, for CLIs that can resume one
+        /// (Claude Code); absent in sessions saved before ids were recorded.
+        #[serde(default)]
+        session: Option<String>,
     },
     /// A `:run` command plugin; restored as a shell rather than run again.
     Command {

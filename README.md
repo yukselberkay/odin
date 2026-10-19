@@ -514,9 +514,14 @@ terminal window — and later run `odin` in the same project, you get back:
   unsaved, so nothing is written to disk until you `:w`);
 - each terminal's output and scrollback, with the shell started again in the
   directory you had `cd`'d to;
-- AI panes resuming their latest conversation in this project: Claude Code and
-  Antigravity with `--continue`, Codex with `resume --last`, Gemini with
-  `--resume latest`. Other launchers restart and show their previous output;
+- AI panes back in their conversation. Each Claude Code pane is started with its own
+  conversation id (`--session-id`) and reopens exactly that conversation
+  (`--resume <id>`), even with several Claude panes or other Claude sessions in the
+  same folder; a pane that never got a message starts fresh under the same id.
+  Codex (`resume --last`), Gemini (`--resume latest`) and Antigravity (`--continue`)
+  cannot be pinned to an id, so they reopen their latest conversation in the
+  project. Other launchers restart below their previous output. Claude panes from a
+  session saved by an older Odin open Claude's conversation picker;
 - the AI launcher, Markdown previews, the Git pane and its branch filter.
 
 The session lives in `.odin/session.json` in the project root, readable only by you.

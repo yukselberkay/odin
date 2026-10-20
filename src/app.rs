@@ -1488,6 +1488,18 @@ impl App {
             }
             KeyCode::Right | KeyCode::Char('l') => self.tree.right()?,
             KeyCode::Enter => self.tree.activate()?,
+            KeyCode::Char(' ') => {
+                self.tree.toggle()?;
+                None
+            }
+            KeyCode::Char('c') => {
+                self.tree.collapse_all()?;
+                None
+            }
+            KeyCode::Char('E') => {
+                self.tree.expand_all()?;
+                None
+            }
             KeyCode::Char('r') => {
                 self.tree.refresh()?;
                 self.notice("File tree refreshed");
@@ -2518,6 +2530,14 @@ impl App {
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
             "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            "collapse" => {
+                self.tree.collapse_all()?;
+                self.notice("Explorer folders collapsed");
+            }
+            "expand" => {
+                self.tree.expand_all()?;
+                self.notice("Explorer: selected folder expanded, with everything inside");
+            }
             // :zoom in / out / reset changes the text size; bare :zoom maximizes the pane.
             "zoom" => match (arg, textsize::Step::parse(arg)) {
                 ("", _) => {

@@ -636,7 +636,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         text(
             frame,
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-            " ↑↓ move  → open  r refresh",
+            " ←→ fold  c/E all  r refresh",
             color(&theme.muted),
         );
     }
@@ -1584,6 +1584,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         let hints = if app.prefix {
             " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  +/-/0 text size  x close  ? help"
+        } else if app.sidebar_focus && !app.git_focus {
+            " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(_))) && !app.sidebar_focus {
             " Tab branches/commits   j k move   Enter show branch / details   a all   y copy hash   r refresh   ^B G maximize"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Preview(_)))
@@ -1695,7 +1697,11 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "↑ ↓ / → / ← / Enter",
             "Browse, previewing files / expand / collapse / open",
         ),
-        (". / r / n", "Hidden files / refresh / new file"),
+        (
+            "Space / c / E",
+            "Fold folder / collapse all / expand all inside",
+        ),
+        ("r / n", "Refresh / new file"),
         ("Ctrl-p / Tab", "Open path / complete visible paths"),
         ("EDITOR", "Vim-inspired, not a full Vim implementation"),
         (

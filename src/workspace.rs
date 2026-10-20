@@ -145,6 +145,76 @@ impl FileTree {
         }
         Ok(())
     }
+    /// Fold every folder, keeping the selection on the top-level entry it was under.
+    pub fn collapse_all(&mut self) -> Result<()> {
+        let selected = self.entries.get(self.selected).map(|e| e.path.clone());
+        self.expanded.clear();
+        self.refresh()?;
+        let top = selected.as_deref().and_then(|path| {
+            path.ancestors()
+                .find(|a| a.parent() == Some(self.root.as_path()))
+                .map(Path::to_path_buf)
+        });
+        if let Some(i) = top.and_then(|top| self.entries.iter().position(|e| e.path == top)) {
+            self.selected = i;
+        }
+        Ok(())
+    }
+    /// Unfold the selected folder and every folder inside it (for a file, the folder
+    /// holding it). `.git` and build output stay folded.
+    pub fn expand_all(&mut self) -> Result<()> {
+        let folder = match self.entries.get(self.selected) {
+            Some(entry) if entry.directory => entry.path.clone(),
+            Some(entry) => entry
+                .path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.root.clone()),
+            None => self.root.clone(),
+        };
+        let mut pending = vec![(folder, 0)];
+        let mut opened = 0;
+        while let Some((dir, depth)) = pending.pop() {
+            if dir != self.root {
+                self.expanded.insert(dir.clone());
+            }
+            opened += 1;
+            if depth >= 32 || opened >= 2_000 {
+                continue;
+            }
+            let Ok(children) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for child in children.filter_map(|e| e.ok()) {
+                let name = child.file_name();
+                let skip = matches!(name.to_str(), Some(".git" | "target" | "node_modules"));
+                if !skip && child.file_type().is_ok_and(|t| t.is_dir()) {
+                    pending.push((child.path(), depth + 1));
+                }
+            }
+        }
+        self.refresh()
+    }
+    /// Space: fold or unfold the selected folder, or the folder holding a file.
+    pub fn toggle(&mut self) -> Result<()> {
+        let Some(entry) = self.entries.get(self.selected).cloned() else {
+            return Ok(());
+        };
+        if entry.directory {
+            if !self.expanded.remove(&entry.path) {
+                self.expanded.insert(entry.path);
+            }
+            return self.refresh();
+        }
+        if let Some(parent) = entry.path.parent() {
+            if let Some(i) = self.entries.iter().position(|e| e.path == parent) {
+                self.selected = i;
+                self.expanded.remove(parent);
+                self.refresh()?;
+            }
+        }
+        Ok(())
+    }
     pub fn reveal(&mut self, path: &Path) {
         let mut parent = path.parent();
         while let Some(dir) = parent {
@@ -460,6 +530,55 @@ mod tests {
             .changes
             .iter()
             .any(|(c, p)| p == "gone.txt" && c.contains('D')));
+    }
+
+    #[test]
+    fn folders_collapse_and_expand_all_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("src/a/b")).unwrap();
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("src/a/b/deep.rs"), "").unwrap();
+        fs::write(root.join("docs/guide.md"), "").unwrap();
+        let mut tree = FileTree::new(root.into()).unwrap();
+        let at = |tree: &FileTree, name: &str| {
+            tree.entries
+                .iter()
+                .position(|e| e.path.ends_with(name))
+                .unwrap()
+        };
+        // E on a folder opens everything inside it, and nothing else.
+        tree.selected = at(&tree, "src");
+        tree.expand_all().unwrap();
+        assert!(tree.entries.iter().any(|e| e.path.ends_with("deep.rs")));
+        assert!(!tree.expanded.contains(&root.join("docs")));
+        // E on a top-level file opens the whole project, except .git.
+        tree.selected = at(&tree, "docs");
+        tree.right().unwrap();
+        tree.selected = at(&tree, "guide.md");
+        tree.toggle().unwrap();
+        assert_eq!(
+            tree.selected,
+            at(&tree, "docs"),
+            "space folds the file's folder"
+        );
+        assert!(!tree.expanded.contains(&root.join("docs")));
+        tree.toggle().unwrap();
+        assert!(tree.expanded.contains(&root.join("docs")));
+        // c folds everything and keeps you on the top-level folder you were in.
+        tree.selected = at(&tree, "deep.rs");
+        tree.collapse_all().unwrap();
+        assert!(tree.expanded.is_empty());
+        assert_eq!(tree.entries.len(), 3);
+        assert!(tree.entries[tree.selected].path.ends_with("src"));
+        fs::write(root.join("top.txt"), "").unwrap();
+        tree.refresh().unwrap();
+        tree.selected = at(&tree, "top.txt");
+        tree.expand_all().unwrap();
+        assert!(tree.expanded.contains(&root.join("src/a/b")));
+        assert!(tree.expanded.contains(&root.join("docs")));
+        assert!(!tree.expanded.contains(&root.join(".git")));
     }
 
     #[test]

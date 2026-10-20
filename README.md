@@ -264,9 +264,9 @@ the history graph appears after you make commits.
   side-by-side preview that follows your cursor while you edit.
 - **Source highlighting:** bundled Rust, C, C++, Python, Go grammars, plus the
   other bundled Syntect languages. Absolute/relative line numbers.
-- **File explorer:** keyboard traversal, expandable directories, dotfiles always
-  shown, VS Code-style Git status colors and letters, new file buffers,
-  visible-path completion, open-buffer cycling.
+- **File explorer:** keyboard traversal, folders that fold one at a time or all at
+  once, dotfiles always shown, VS Code-style Git status colors and letters, new
+  file buffers, visible-path completion, open-buffer cycling.
 - **Tiling:** recursively nested horizontal/vertical splits, directional focus,
   resize, zoom, and close. Up to 12 panes; editor views can share buffers.
 - **Terminals:** real PTYs, ANSI/256/true-color rendering, resize propagation,
@@ -324,6 +324,9 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 | Right or `l` | Expand directory; enter its first child if already expanded; open file |
 | Left or `h` | Collapse current directory or select parent |
 | Enter | Toggle directory / open selected file and move focus to it |
+| Space | Fold or unfold the selected folder; on a file, fold the folder holding it |
+| `c` | Collapse all folders (also `:collapse`) |
+| `E` | Expand the selected folder and every folder inside it; on a top-level file, the whole project. `.git`, `target` and `node_modules` stay folded (also `:expand`) |
 | `r` | Refresh file tree (e.g. after creating files in a terminal) |
 | `n` | Start a new-file command; supply the path and press Enter |
 | Tab | Switch between file explorer and Git section |

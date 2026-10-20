@@ -300,7 +300,8 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b o` | Cycle panes |
 | `Ctrl-b c` | New terminal |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
-| `Ctrl-b z` / `x` | Zoom / close current pane |
+| `Ctrl-b z` / `x` | Maximize (zoom) / close current pane |
+| `Ctrl-b +` / `-` / `0` | [Text size](#text-size) bigger / smaller / reset; keep pressing `+` or `-` to repeat |
 | `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
 | `Ctrl-b G` | Open the [Git pane](#git-pane); again focuses it, and when focused maximizes / restores it |
 | `Ctrl-b PageUp` / `PageDown` | Terminal scrollback |
@@ -365,6 +366,22 @@ and Enter opens one. Git is
 read-only in the sidebar and refreshes periodically. Common status codes include
 `??` (untracked), `M` (modified), and `A` (added); the two columns distinguish
 index and working-tree status. Symlink directories are not recursively expanded.
+
+### Text size
+
+`Ctrl-b +` (or `=`) zooms in, `Ctrl-b -` zooms out and `Ctrl-b 0` resets; right
+after one of them, `+`, `-` and `0` keep working without the prefix for a second.
+`:zoom in`, `:zoom out` and `:zoom reset` do the same (`:zoom` alone maximizes the
+pane, like `Ctrl-b z`). The layout, editors and terminal panes reflow to the new size.
+
+A terminal program can't scale its own text, so Odin asks the terminal window:
+
+| Terminal | How |
+| --- | --- |
+| macOS Terminal | AppleScript, 1 pt per step, only for Odin's own tab; your profile is untouched and reset returns to its size |
+| xterm | Its font menu escape (`allowFontOps`, on by default) |
+| kitty | `kitty @ set-font-size`, when remote control is on (`allow_remote_control` and `listen_on`) |
+| Others (iTerm2, Ghostty, WezTerm, Alacritty, Windows Terminal, …) | Odin names your terminal's own keys: Cmd-+ / Cmd-- / Cmd-0 on macOS, Ctrl-+ / Ctrl-- / Ctrl-0 elsewhere |
 
 ### Git pane
 

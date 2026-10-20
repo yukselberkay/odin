@@ -13,6 +13,7 @@ mod omarchy;
 mod platform;
 mod session;
 mod terminal;
+mod textsize;
 mod ui;
 mod vscode;
 mod workspace;

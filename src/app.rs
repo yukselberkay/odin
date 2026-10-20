@@ -9,6 +9,7 @@ use crate::{
     markdown::{self, Previews},
     session::{self, SavedBuffer, SavedPane, Session},
     terminal::{Launch, TerminalPane},
+    textsize,
     workspace::{self, FileTree, GitInfo},
 };
 use anyhow::{bail, Context, Result};
@@ -259,6 +260,10 @@ pub struct App {
     last_session: Instant,
     /// Autosave this project's session (`:session forget` turns it off until restart).
     session_enabled: bool,
+    /// The terminal's answer to a text size change.
+    text_size: Option<Receiver<Result<String>>>,
+    /// Right after Ctrl-b +, `-` or `0`, those keys repeat without the prefix.
+    text_size_repeat: Option<Instant>,
 }
 
 impl App {
@@ -322,6 +327,8 @@ impl App {
             session_json: String::new(),
             last_session: Instant::now(),
             session_enabled: true,
+            text_size: None,
+            text_size_repeat: None,
         };
         if let Some(path) = initial {
             app.open(&path)?;
@@ -387,6 +394,12 @@ impl App {
     }
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.open_file(path, false)
+    }
+    /// Zoom in / out: ask the terminal window for bigger or smaller text. Odin's
+    /// layout follows the resize that results.
+    fn change_text_size(&mut self, step: textsize::Step) {
+        self.text_size = Some(textsize::change(step));
+        self.text_size_repeat = Some(Instant::now());
     }
     /// Show the file highlighted in the sidebar without leaving the sidebar.
     fn peek_selected(&mut self) {
@@ -843,6 +856,20 @@ impl App {
                 _ => {}
             }
         }
+        if let Some(receiver) = &self.text_size {
+            match receiver.try_recv() {
+                Ok(Ok(status)) => {
+                    self.text_size = None;
+                    self.notice(status);
+                }
+                Ok(Err(error)) => {
+                    self.text_size = None;
+                    self.fail(format!("Text size: {error:#}"));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.text_size = None,
+                _ => {}
+            }
+        }
         if let Some(receiver) = &self.git_receiver {
             match receiver.try_recv() {
                 Ok(info) => {
@@ -1010,6 +1037,14 @@ impl App {
         }
         if self.input.is_some() {
             return self.input_key(key);
+        }
+        if let Some(at) = self.text_size_repeat.take() {
+            if let (KeyCode::Char(c), true) = (key.code, at.elapsed() < Duration::from_secs(1)) {
+                if let Some(step) = textsize::Step::key(c) {
+                    self.change_text_size(step);
+                    return Ok(());
+                }
+            }
         }
         if self.prefix {
             self.prefix = false;
@@ -1281,6 +1316,13 @@ impl App {
         Ok(())
     }
     fn prefix_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(step) = match key.code {
+            KeyCode::Char(c) => textsize::Step::key(c),
+            _ => None,
+        } {
+            self.change_text_size(step);
+            return Ok(());
+        }
         match key.code {
             KeyCode::Char('%') => self.split_editor(Axis::Horizontal)?,
             KeyCode::Char('"') => self.split_editor(Axis::Vertical)?,
@@ -2476,6 +2518,17 @@ impl App {
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
             "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            // :zoom in / out / reset changes the text size; bare :zoom maximizes the pane.
+            "zoom" => match (arg, textsize::Step::parse(arg)) {
+                ("", _) => {
+                    self.zoom = !self.zoom;
+                    self.sidebar_focus = false;
+                }
+                (_, Some(step)) => self.change_text_size(step),
+                _ => bail!(
+                    "Use :zoom in, :zoom out or :zoom reset (text size); :zoom maximizes the pane"
+                ),
+            },
             "session" => match arg {
                 "" => self.notice(if !self.config.restore_session {
                     "Sessions are off (restore_session = false)".to_string()

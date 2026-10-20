@@ -1583,7 +1583,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         frame.set_cursor_position((area.x + (cols - skip) as u16, area.y + 1));
     } else {
         let hints = if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  x close  ? help"
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  +/-/0 text size  x close  ? help"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(_))) && !app.sidebar_focus {
             " Tab branches/commits   j k move   Enter show branch / details   a all   y copy hash   r refresh   ^B G maximize"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Preview(_)))
@@ -1670,6 +1670,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "AI launcher beside / below (ai_split sets default)",
         ),
         ("Ctrl-b z / x / s", "Zoom / close pane / toggle sidebar"),
+        (
+            "Ctrl-b + / - / 0",
+            "Text bigger / smaller / reset (repeat + or -); :zoom in/out",
+        ),
         (
             "Ctrl-b g / PgUp / PgDn",
             "Git sidebar / terminal scrollback",

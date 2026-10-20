@@ -264,6 +264,8 @@ pub struct App {
     text_size: Option<Receiver<Result<String>>>,
     /// Right after Ctrl-b +, `-` or `0`, those keys repeat without the prefix.
     text_size_repeat: Option<Instant>,
+    /// `odin FILE` typed in a terminal pane arrives here.
+    pub remote: Option<crate::remote::Server>,
 }
 
 impl App {
@@ -329,6 +331,7 @@ impl App {
             session_enabled: true,
             text_size: None,
             text_size_repeat: None,
+            remote: None,
         };
         if let Some(path) = initial {
             app.open(&path)?;
@@ -394,6 +397,89 @@ impl App {
     }
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.open_file(path, false)
+    }
+    /// `odin PATH` from one of Odin's terminals: open the file here instead of
+    /// nesting another Odin; a folder of this project is shown in the explorer.
+    fn remote_open(&mut self, path: &Path) -> crate::remote::Reply {
+        use crate::remote::Reply;
+        if path.is_dir() {
+            let Ok(dir) = path.canonicalize() else {
+                return Reply::Failed(format!("Cannot open {}", path.display()));
+            };
+            if !dir.starts_with(&self.root) {
+                return Reply::Elsewhere;
+            }
+            self.sidebar_visible = true;
+            if dir != self.root {
+                self.tree.reveal(&dir);
+                self.tree.expanded.insert(dir.clone());
+                let _ = self.tree.refresh();
+            }
+            let name = dir.file_name().unwrap_or_default().to_string_lossy();
+            return Reply::Opened(format!(
+                "Odin is already open here; {} is in the explorer",
+                workspace::printable(&name)
+            ));
+        }
+        match self.open_from_terminal(path) {
+            Ok(name) => {
+                self.notice(format!("Opened {name} from the terminal"));
+                Reply::Opened(format!("Opened {name} in Odin"))
+            }
+            Err(error) => {
+                let error = format!("{error:#}");
+                self.fail(error.clone());
+                Reply::Failed(error)
+            }
+        }
+    }
+    /// Show PATH in a pane of its own beside the terminal (or focus the pane already
+    /// showing it). A file that doesn't exist yet opens as a new buffer.
+    fn open_from_terminal(&mut self, path: &Path) -> Result<String> {
+        let fresh = Buffer::open(path)?;
+        let key = fresh.path.clone().context("Missing file name")?;
+        let id = match self
+            .buffers
+            .iter()
+            .position(|b| b.path.as_ref() == Some(&key))
+        {
+            Some(id) => id,
+            None => {
+                self.buffers.push(fresh);
+                self.buffers.len() - 1
+            }
+        };
+        let name = self.buffers[id].name();
+        let shown = self.panes.iter().find_map(|(&pane, p)| match p {
+            Pane::Editor(b) if *b == id => Some(pane),
+            Pane::Preview(p) if p.buffer == id => Some(pane),
+            _ => None,
+        });
+        if let Some(pane) = shown {
+            self.focused = pane;
+            self.sidebar_focus = false;
+            self.mode = Mode::Normal;
+            return Ok(name);
+        }
+        let document = matches!(
+            self.panes.get(&self.focused),
+            Some(Pane::Editor(_) | Pane::Preview(_))
+        );
+        if !document && self.panes.len() < 12 {
+            let wide = self
+                .rectangles
+                .iter()
+                .find(|(pane, _)| *pane == self.focused)
+                .is_none_or(|(_, area)| area.width >= 80);
+            let axis = if wide {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
+            self.add_pane(Pane::Editor(id), axis);
+        }
+        self.open(&key)?;
+        Ok(name)
     }
     /// Zoom in / out: ask the terminal window for bigger or smaller text. Odin's
     /// layout follows the resize that results.
@@ -855,6 +941,16 @@ impl App {
                 Pane::Git(view) => self.redraw |= view.poll(),
                 _ => {}
             }
+        }
+        let asks: Vec<_> = self
+            .remote
+            .as_ref()
+            .map(|server| server.requests.try_iter().collect())
+            .unwrap_or_default();
+        for ask in asks {
+            let reply = self.remote_open(&ask.path);
+            ask.answer(reply);
+            self.redraw = true;
         }
         if let Some(receiver) = &self.text_size {
             match receiver.try_recv() {
@@ -3528,5 +3624,51 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         );
         assert_eq!(badge("src").0, "●");
         assert_eq!(badge(".git").0, " ", "ignored paths are only dimmed");
+    }
+    #[test]
+    fn odin_typed_in_a_terminal_opens_the_file_here() {
+        use crate::remote::Reply;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        let mut app = App::new(root.clone(), None, false).unwrap();
+        // Typed from a non-editor pane (the AI launcher stands in for a shell).
+        let launcher = app.add_pane(Pane::Ai, Axis::Horizontal);
+        let panes = app.panes.len();
+        let reply = app.remote_open(&root.join("src/main.rs"));
+        assert_eq!(reply, Reply::Opened("Opened main.rs in Odin".into()));
+        assert_eq!(app.panes.len(), panes + 1, "a pane of its own");
+        let Some(Pane::Editor(id)) = app.panes.get(&app.focused) else {
+            panic!("the file is focused in an editor");
+        };
+        assert_eq!(app.buffers[*id].line(0), "fn main() {}");
+        let editor = app.focused;
+        // Again from the terminal: the pane showing it comes forward, nothing new.
+        app.focused = launcher;
+        app.remote_open(&root.join("src/main.rs"));
+        assert_eq!((app.focused, app.panes.len()), (editor, panes + 1));
+        // A file that doesn't exist yet opens as a new buffer, saved on :w.
+        app.focused = launcher;
+        app.remote_open(&root.join("xyz.txt"));
+        assert_eq!(app.panes.len(), panes + 2);
+        assert_eq!(
+            app.active_buffer().unwrap().path,
+            Some(root.join("xyz.txt"))
+        );
+        assert!(!root.join("xyz.txt").exists());
+        // Folders of this project show in the explorer; others get their own Odin.
+        assert!(matches!(
+            app.remote_open(&root.join("src")),
+            Reply::Opened(_)
+        ));
+        assert!(app.tree.expanded.contains(&root.join("src")));
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(app.remote_open(other.path()), Reply::Elsewhere);
+        assert!(matches!(
+            app.remote_open(&root.join("blob.bin")),
+            Reply::Failed(_)
+        ));
     }
 }

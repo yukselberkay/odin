@@ -72,6 +72,11 @@ impl TerminalPane {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("ODIN", "1");
+        // `odin FILE` typed here opens FILE in this Odin.
+        match crate::remote::address() {
+            Some(socket) => command.env(crate::remote::VAR, socket),
+            None => command.env_remove(crate::remote::VAR),
+        }
         for (key, value) in env {
             command.env(key, value);
         }

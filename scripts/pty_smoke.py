@@ -65,6 +65,14 @@ def main():
             send(b"printf 'ODIN_PTY_OK\\n'\r")
             drain(0.5)
             assert b"ODIN_PTY_OK" in output, "Nested terminal did not render"
+            # `odin FILE` in Odin's own terminal opens FILE here; no second Odin.
+            send(f"'{binary}' fromshell.txt\r".encode())
+            drain(1.0)
+            assert "fromshell.txt ─".encode() in output, "odin FILE nested instead of opening a pane"
+            send(b"ihello from the shell")
+            send(b"\x1b")
+            send(b"\x13")
+            assert (root / "fromshell.txt").read_text() == "hello from the shell", "Opened file was not editable"
             prefix(b"a")
             assert b"YOUR TOOLS" in output, "AI launcher did not render"
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 100, 0, 0))
@@ -83,7 +91,7 @@ def main():
             assert exited, "App failed to exit"
             assert b"\x1b[?1049l" in output, "Alternate screen was not restored"
             assert not (termios.tcgetattr(fd)[3] & termios.ICANON) == 0, "Raw mode was not restored"
-            print("PASS: real PTY startup, Unicode paste, save, search, jump, split, nested shell, AI launcher, resize, clean exit and terminal restoration")
+            print("PASS: real PTY startup, Unicode paste, save, search, jump, split, nested shell, odin FILE from the shell, AI launcher, resize, clean exit and terminal restoration")
         finally:
             if not exited:
                 try:

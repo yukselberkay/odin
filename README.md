@@ -272,6 +272,7 @@ the history graph appears after you make commits.
 - **Terminals:** real PTYs, ANSI/256/true-color rendering, resize propagation,
   application cursor keys, bracketed paste, terminal query responses, and
   bounded scrollback. Shells and CLI tools run in the project directory.
+  `odin FILE` typed in one opens FILE in a pane of this Odin, not a second Odin.
 - **AI panes:** run **OpenAI Codex**, **Claude Code**, **Gemini CLI** or the
   **Antigravity CLI** (`agy`) as installed executables, beside or below your code.
   These are the real tools, not imitations or provider-specific chat widgets.
@@ -541,6 +542,23 @@ is not a fuzzy full-project index. Editor paths may be absolute or workspace-rel
 `~` and shell variables are not expanded there. Type paths with spaces directly,
 without shell quotes. Shell commands follow your shell's normal quoting rules.
 
+### Opening files from a terminal pane
+
+Inside one of Odin's terminal panes, `odin FILE` doesn't start a second Odin inside
+the first. It opens FILE in this Odin, in a new editor pane beside the terminal,
+and returns you to the shell prompt with `Opened FILE in Odin`. Relative paths are
+relative to the shell's current directory.
+
+- A file that doesn't exist yet opens as a new buffer; `Ctrl-s` creates it.
+- A file already on screen brings its pane forward instead of opening another.
+- Markdown files open rendered, as they do from the explorer.
+- `odin DIR` (or bare `odin`) for a folder of this project shows it in the explorer.
+  A folder of another project, or `odin --nested FILE`, starts a separate Odin as before.
+
+Odin listens on a socket in a private temporary directory (mode `0700`, removed
+when Odin exits) and passes its path to every terminal pane as `ODIN_SOCKET`.
+On Windows, `odin` in a terminal pane still starts a separate Odin.
+
 ### Sessions
 
 Odin reopens a project the way you left it. When you quit — or simply close the
@@ -592,7 +610,7 @@ Set `restore_session = false` in `config.toml` to turn sessions off everywhere.
 :reload                   Reload a clean file
 :new                      New scratch editor pane
 :split / :vsplit          Stack / side-by-side split
-:term                     New shell
+:term                     New shell (in it, `odin FILE` opens FILE here)
 :ai [codex|claude|gemini|agy] [right|below]
                           AI launcher, or launch a CLI, beside or below
 :ai local [model]         Your local LLM ([ai.local], else Ollama / LM Studio)

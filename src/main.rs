@@ -11,6 +11,7 @@ mod lsp;
 mod markdown;
 mod omarchy;
 mod platform;
+mod remote;
 mod session;
 mod terminal;
 mod textsize;
@@ -75,10 +76,11 @@ fn main() -> Result<()> {
     let mut path = None;
     let mut demo = false;
     let mut fresh = false;
+    let mut nested = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-h" | "--help" => {
-                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
+                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --nested   Inside an Odin terminal, start a separate Odin instead of opening FILE there\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
                 return Ok(());
             }
             "-V" | "--version" => {
@@ -87,6 +89,7 @@ fn main() -> Result<()> {
             }
             "--demo" => demo = true,
             "--fresh" => fresh = true,
+            "--nested" => nested = true,
             _ if arg.starts_with('-') => bail!("Unknown option: {arg}"),
             _ => {
                 if path.is_some() {
@@ -96,10 +99,27 @@ fn main() -> Result<()> {
             }
         }
     }
+    let cwd = std::env::current_dir()?;
+    // Typed in one of Odin's own terminals: open it in that Odin, don't nest one.
+    if let (Some(socket), false) = (std::env::var_os(remote::VAR), nested || demo) {
+        let target = match &path {
+            Some(p) if p.is_absolute() => p.clone(),
+            Some(p) => cwd.join(p),
+            None => cwd.clone(),
+        };
+        match remote::send(std::path::Path::new(&socket), &target) {
+            Ok(remote::Reply::Opened(message)) => {
+                println!("{message}");
+                return Ok(());
+            }
+            Ok(remote::Reply::Failed(error)) => bail!("{error}"),
+            // Another project, or that Odin is gone: start here as usual.
+            Ok(remote::Reply::Elsewhere) | Err(_) => {}
+        }
+    }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         bail!("Odin needs an interactive terminal. Run `odin` in your terminal.");
     }
-    let cwd = std::env::current_dir()?;
     let path = path
         .map(|p| if p.is_absolute() { p } else { cwd.join(p) })
         .unwrap_or(cwd);
@@ -130,7 +150,10 @@ fn main() -> Result<()> {
     };
     // A saved session reopens first; a file named on the command line opens on top.
     let restore = !demo && !fresh;
+    // Listen before any terminal pane starts, so every pane knows where Odin is.
+    let server = remote::listen().ok();
     let mut app = app::App::new(root, if restore { None } else { initial.clone() }, demo)?;
+    app.remote = server;
     if restore {
         app.restore_session();
         if let Some(path) = &initial {

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -167,6 +167,99 @@ pub struct GitInfo {
     pub changes: Vec<(String, String)>,
     pub graph: Vec<String>,
     pub error: Option<String>,
+    /// Explorer decorations: changed files, and folders holding changes.
+    marks: HashMap<String, Mark>,
+    /// Whole untracked or ignored folders; everything inside shares the mark.
+    folders: HashMap<String, Mark>,
+}
+
+/// How Git sees a path, as the explorer shows it (VS Code's letters). Ordered so a
+/// folder takes the most urgent mark among the files it holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Mark {
+    Ignored,
+    Untracked,
+    Added,
+    Renamed,
+    Modified,
+    Deleted,
+    Conflict,
+}
+
+impl Mark {
+    /// Map a `git status --porcelain` XY code.
+    fn parse(code: &str) -> Option<Self> {
+        let mut chars = code.chars();
+        let (x, y) = (chars.next()?, chars.next()?);
+        Some(match (x, y) {
+            ('?', '?') => Self::Untracked,
+            ('!', '!') => Self::Ignored,
+            ('U', _) | (_, 'U') | ('A', 'A') | ('D', 'D') => Self::Conflict,
+            (_, 'D') | ('D', _) => Self::Deleted,
+            ('A', _) => Self::Added,
+            ('R', _) | ('C', _) => Self::Renamed,
+            ('M' | 'T', _) | (_, 'M' | 'T') => Self::Modified,
+            _ => return None,
+        })
+    }
+    pub fn letter(self) -> &'static str {
+        match self {
+            Self::Ignored => "",
+            Self::Untracked => "U",
+            Self::Added => "A",
+            Self::Renamed => "R",
+            Self::Modified => "M",
+            Self::Deleted => "D",
+            Self::Conflict => "!",
+        }
+    }
+}
+
+impl GitInfo {
+    fn record(&mut self, code: &str, path: &str) {
+        let Some(mark) = Mark::parse(code) else {
+            return;
+        };
+        let folder = path.ends_with('/');
+        let path = path.trim_end_matches('/');
+        if path.is_empty() {
+            return;
+        }
+        // Ignored paths only dim themselves; `?? dir/` covers everything inside.
+        if mark == Mark::Ignored || folder {
+            self.folders.insert(path.to_owned(), mark);
+        } else {
+            self.raise(path, mark);
+        }
+        if mark == Mark::Ignored {
+            return;
+        }
+        let mut parent = path;
+        while let Some((up, _)) = parent.rsplit_once('/') {
+            self.raise(up, mark);
+            parent = up;
+        }
+    }
+    fn raise(&mut self, path: &str, mark: Mark) {
+        let slot = self.marks.entry(path.to_owned()).or_insert(mark);
+        *slot = (*slot).max(mark);
+    }
+    /// The explorer mark for a path relative to the project root (`/`-separated).
+    pub fn mark(&self, relative: &str) -> Option<Mark> {
+        if let Some(mark) = self.marks.get(relative) {
+            return Some(*mark);
+        }
+        if relative == ".git" || relative.starts_with(".git/") {
+            return Some(Mark::Ignored);
+        }
+        let mut path = relative;
+        loop {
+            if let Some(mark) = self.folders.get(path) {
+                return Some(*mark);
+            }
+            path = path.rsplit_once('/')?.0;
+        }
+    }
 }
 
 // Git runs on a worker, with no shell and no repository-provided fsmonitor.
@@ -236,6 +329,7 @@ pub fn refresh_git(root: PathBuf) -> Receiver<GitInfo> {
                 "--porcelain=v1",
                 "-z",
                 "--untracked-files=normal",
+                "--ignored=matching",
                 "--",
                 ".",
             ],
@@ -254,7 +348,10 @@ pub fn refresh_git(root: PathBuf) -> Receiver<GitInfo> {
                 if code.contains('R') || code.contains('C') {
                     entries.next();
                 }
-                info.changes.push((code, path));
+                info.record(&code, &path);
+                if code != "!!" {
+                    info.changes.push((code, path));
+                }
             }
         } else {
             info.error = Some("Git status timed out or failed".into());
@@ -310,5 +407,77 @@ mod tests {
         tree.activate().unwrap();
         assert_eq!(tree.entries.len(), 4);
         assert!(tree.entries.iter().any(|e| e.symlink && !e.directory));
+    }
+
+    #[test]
+    fn explorer_marks_follow_git_status_like_vs_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let run = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(["-c", "user.name=Odin", "-c", "user.email=odin@example.com"])
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        run(&["init", "-q"]);
+        fs::create_dir_all(root.join("src/deep")).unwrap();
+        fs::write(root.join("src/deep/kept.rs"), "a").unwrap();
+        fs::write(root.join("src/clean.rs"), "a").unwrap();
+        fs::write(root.join("gone.txt"), "a").unwrap();
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-q", "-m", "init"]);
+        fs::write(root.join("src/deep/kept.rs"), "b").unwrap();
+        fs::remove_file(root.join("gone.txt")).unwrap();
+        fs::create_dir_all(root.join("fresh/inner")).unwrap();
+        fs::write(root.join("fresh/inner/new.rs"), "").unwrap();
+        fs::write(root.join("staged.rs"), "").unwrap();
+        run(&["add", "staged.rs"]);
+        fs::write(root.join("debug.log"), "").unwrap();
+        let info = refresh_git(root.to_path_buf())
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(info.mark("src/deep/kept.rs"), Some(Mark::Modified));
+        assert_eq!(info.mark("src/deep"), Some(Mark::Modified));
+        assert_eq!(info.mark("src"), Some(Mark::Modified));
+        assert_eq!(info.mark("src/clean.rs"), None);
+        assert_eq!(info.mark("staged.rs"), Some(Mark::Added));
+        assert_eq!(info.mark("fresh"), Some(Mark::Untracked));
+        assert_eq!(info.mark("fresh/inner/new.rs"), Some(Mark::Untracked));
+        assert_eq!(info.mark("debug.log"), Some(Mark::Ignored));
+        assert_eq!(info.mark(".git/HEAD"), Some(Mark::Ignored));
+        assert_eq!(info.mark(".gitignore"), None);
+        // Ignored files stay out of the change list; the deleted file stays in it.
+        assert!(info.changes.iter().all(|(_, p)| p != "debug.log"));
+        assert!(info
+            .changes
+            .iter()
+            .any(|(c, p)| p == "gone.txt" && c.contains('D')));
+    }
+
+    #[test]
+    fn folders_take_their_most_urgent_change() {
+        let mut info = GitInfo::default();
+        info.record("??", "a/b/new.rs");
+        info.record(" M", "a/edit.rs");
+        info.record("UU", "a/b/c/both.rs");
+        info.record(" D", "z/old.rs");
+        info.record("XY", "unknown.rs");
+        assert_eq!(info.mark("a/b/new.rs"), Some(Mark::Untracked));
+        assert_eq!(info.mark("a/b"), Some(Mark::Conflict));
+        assert_eq!(info.mark("a"), Some(Mark::Conflict));
+        assert_eq!(info.mark("z"), Some(Mark::Deleted));
+        assert_eq!(info.mark("unknown.rs"), None);
+        assert_eq!(Mark::parse("AM"), Some(Mark::Added));
+        assert_eq!(Mark::parse("R "), Some(Mark::Renamed));
+        assert_eq!(Mark::parse("MM"), Some(Mark::Modified));
+        assert_eq!(Mark::Conflict.letter(), "!");
     }
 }

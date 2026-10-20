@@ -5,7 +5,7 @@ use crate::{
     gitgraph::{self, Focus as GitFocus, GitView, RefKind},
     lsp::Diagnostic,
     markdown,
-    workspace::printable,
+    workspace::{printable, Mark},
 };
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -502,6 +502,19 @@ fn theme_picker(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+/// Explorer colors for Git marks, from the theme's terminal palette when it has one.
+pub(crate) fn mark_color(mark: Mark, theme: &Theme) -> Color {
+    let ansi = |index: usize| theme.ansi.as_ref().map(|a| color(&a[index]));
+    match mark {
+        Mark::Ignored => color(&theme.muted),
+        Mark::Untracked | Mark::Added | Mark::Renamed => {
+            ansi(10).unwrap_or_else(|| color(&theme.accent))
+        }
+        Mark::Modified => color(&theme.warning),
+        Mark::Deleted | Mark::Conflict => ansi(9).unwrap_or(Color::LightRed),
+    }
+}
+
 fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let git_height = (area.height / 3).clamp(8, 16).min(area.height / 2);
@@ -547,27 +560,32 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "·"
         };
-        let relative = entry
-            .path
-            .strip_prefix(&app.root)
-            .ok()
-            .map(|p| p.to_string_lossy());
-        let changed = relative
-            .as_ref()
-            .and_then(|path| app.git.changes.iter().find(|(_, p)| p == path.as_ref()))
-            .map(|(code, _)| code.trim());
-        let mut style = Style::default().fg(color(if entry.directory {
-            &theme.secondary
-        } else {
-            &theme.foreground
-        }));
+        let mark = entry.path.strip_prefix(&app.root).ok().and_then(|p| {
+            let relative = p.to_string_lossy();
+            app.git
+                .mark(&relative.replace(std::path::MAIN_SEPARATOR, "/"))
+        });
+        let mut style = Style::default().fg(match mark {
+            Some(mark) => mark_color(mark, theme),
+            None if entry.directory => color(&theme.secondary),
+            None => color(&theme.foreground),
+        });
         if index == app.tree.selected {
             style = style.bg(color(&theme.selection));
             if app.sidebar_focus && !app.git_focus {
-                style = style.fg(color(&theme.accent)).add_modifier(Modifier::BOLD);
+                style = style.add_modifier(Modifier::BOLD);
+                if mark.is_none() {
+                    style = style.fg(color(&theme.accent));
+                }
             }
         }
-        let suffix = changed.map(|c| format!(" {c}")).unwrap_or_default();
+        // VS Code style: a letter beside changed files, a dot beside folders
+        // holding changes, ignored paths dimmed.
+        let badge = match mark {
+            Some(Mark::Ignored) | None => "",
+            Some(_) if entry.directory => "●",
+            Some(mark) => mark.letter(),
+        };
         let indent = "  ".repeat(entry.depth);
         let line = if app.config.icons != crate::config::Icons::Off {
             let open = app.tree.expanded.contains(&entry.path);
@@ -596,18 +614,23 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             Line::from(vec![
                 Span::styled(format!(" {indent}{arrow} "), style),
                 Span::styled(format!("{glyph} "), icon_style),
-                Span::styled(format!("{}{suffix}", printable(&name)), style),
+                Span::styled(printable(&name), style),
             ])
         } else {
-            Line::styled(
-                format!(" {indent}{marker} {}{suffix}", printable(&name)),
-                style,
-            )
+            Line::styled(format!(" {indent}{marker} {}", printable(&name)), style)
         };
+        let row = Rect::new(inner.x, inner.y + 1 + offset as u16, inner.width, 1);
+        let badge_width = if badge.is_empty() { 0 } else { 2 }.min(row.width);
         frame.render_widget(
             Paragraph::new(line).style(style),
-            Rect::new(inner.x, inner.y + 1 + offset as u16, inner.width, 1),
+            Rect::new(row.x, row.y, row.width - badge_width, 1),
         );
+        if badge_width > 0 {
+            frame.render_widget(
+                Paragraph::new(format!("{badge} ")).style(style),
+                Rect::new(row.right() - badge_width, row.y, badge_width, 1),
+            );
+        }
     }
     if inner.height > 3 {
         text(

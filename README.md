@@ -265,7 +265,8 @@ the history graph appears after you make commits.
 - **Source highlighting:** bundled Rust, C, C++, Python, Go grammars, plus the
   other bundled Syntect languages. Absolute/relative line numbers.
 - **File explorer:** keyboard traversal, expandable directories, dotfiles always
-  shown, new file buffers, visible-path completion, open-buffer cycling.
+  shown, VS Code-style Git status colors and letters, new file buffers,
+  visible-path completion, open-buffer cycling.
 - **Tiling:** recursively nested horizontal/vertical splits, directional focus,
   resize, zoom, and close. Up to 12 panes; editor views can share buffers.
 - **Terminals:** real PTYs, ANSI/256/true-color rendering, resize propagation,
@@ -331,6 +332,22 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 Dotfiles and dot-directories (`.github`, `.env`, `.git`, `.odin`, …) are always shown.
 Only `target` and `node_modules` build output is left out of the tree; `Ctrl-p` still
 opens files there.
+
+Like VS Code, the explorer shows what Git sees, refreshed every few seconds:
+
+| Mark | Color | Meaning |
+| --- | --- | --- |
+| `M` | yellow | Modified |
+| `U` | green | Untracked (new, not yet added) |
+| `A` | green | Added to the index |
+| `R` | green | Renamed or copied |
+| `D` | red | Deleted (shown on the folder that held it) |
+| `!` | red | Merge conflict |
+| `●` | most urgent inside | A folder holding changes |
+| dimmed | — | Ignored by `.gitignore`, and `.git` itself |
+
+The name takes the mark's color too. Colors come from the theme's terminal palette
+(bright green and red) and its `warning` color.
 
 Each entry shows a **file-type icon** in its language's color, the same Nerd Font glyphs
 Omarchy's terminal tools use (Rust, C/C++, Python, Go, JS/TS, Markdown, TOML, YAML,

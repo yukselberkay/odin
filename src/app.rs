@@ -3386,4 +3386,74 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert_eq!(a.len(), 36);
         assert_eq!(&a[14..15], "4", "version 4 UUID");
     }
+    #[test]
+    fn explorer_marks_changed_files_and_their_folders() {
+        use crate::workspace::Mark;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Odin",
+                    "-c",
+                    "user.email=odin@example.com",
+                    "-C",
+                ])
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "a").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+        std::fs::write(root.join("src/lib.rs"), "b").unwrap();
+        std::fs::write(root.join("notes.md"), "").unwrap();
+        let mut app = App::new(root.into(), None, false).unwrap();
+        app.tree.expanded.insert(root.join("src"));
+        app.tree.refresh().unwrap();
+        let start = Instant::now();
+        while app.git.changes.len() < 2 && start.elapsed() < Duration::from_secs(10) {
+            app.tick();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = |name: &str| {
+            (0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .position(|line| line.contains(name) && line.contains("│"))
+                .map(|y| y as u16)
+                .unwrap_or_else(|| panic!("{name} not in the explorer"))
+        };
+        // The badge sits at the right edge of the explorer, in the mark's color.
+        let badge = |name: &str| {
+            let y = row(name);
+            let edge = (1..buffer.area.width)
+                .find(|&x| buffer[(x, y)].symbol() == "│")
+                .unwrap();
+            let cell = &buffer[(edge - 2, y)];
+            (cell.symbol().to_string(), cell.fg)
+        };
+        let theme = &app.theme;
+        assert_eq!(
+            badge("lib.rs"),
+            ("M".into(), crate::ui::mark_color(Mark::Modified, theme))
+        );
+        assert_eq!(
+            badge("notes.md"),
+            ("U".into(), crate::ui::mark_color(Mark::Untracked, theme))
+        );
+        assert_eq!(badge("src").0, "●");
+        assert_eq!(badge(".git").0, " ", "ignored paths are only dimmed");
+    }
 }

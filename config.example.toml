@@ -20,6 +20,8 @@ git_pane = false
 restore_session = true
 # Where AI panes open: "right" (side by side) or "below" (stacked).
 ai_split = "right"
+# Teach your AI agents about Odin (an Agent Skills skill, installed on first launch).
+ai_skill = true
 # shell = "/bin/zsh"
 
 # Language servers start automatically for Rust, Go, Python, C and C++ files.

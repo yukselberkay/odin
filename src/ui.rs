@@ -1714,6 +1714,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Save font size / family in your terminal; :font list",
         ),
         (
+            ":docs / ask your AI agent",
+            "Full manual / agents know Odin via its skill (:skill)",
+        ),
+        (
             "Ctrl-b g / PgUp / PgDn",
             "Git sidebar / terminal scrollback",
         ),

@@ -658,6 +658,8 @@ Set `restore_session = false` in `config.toml` to turn sessions off everywhere.
 :format                   Format the file with its language server
 :lsp / :lsp restart       Language server status / restart all servers
 :font [size N|family X|list]  Terminal font: show, save size or family, list fonts
+:docs                     Open the full Odin manual (rendered)
+:skill [install|remove]   Install / remove the Odin skill for AI agents
 :set rnu / :set nornu     Relative / absolute line numbers
 :run name                 Launch an explicitly configured command plugin
 :git / :git all           Git pane: open, focus, or maximize / show all branches
@@ -673,6 +675,33 @@ closing the last pane with `:q!` exits and discards unsaved buffers.
 `:qa!` explicitly discards all unsaved buffers. Odin does not automatically save
 files on exit. `:wa` stops on an error (for example an unnamed dirty buffer); use
 `:w filename` on that buffer before retrying.
+
+## Ask your AI agent about Odin
+
+Odin ships an **agent skill** — interactive documentation your AI agent reads on its
+own. Ask it things like *"how do I make the font bigger in Odin?"*, *"how do I open
+Git?"* or *"set my theme to Dracula"*, and it answers with the exact keys (or edits
+your config for you).
+
+The skill uses the open [Agent Skills](https://agentskills.io) format (`SKILL.md`),
+so it works with **Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot** and any
+other agent that reads skills. Odin installs it the first time you launch an AI pane:
+one copy in Odin's data folder (`~/.local/share/odin/skills/odin`; `%APPDATA%\odin` on
+Windows), linked into the shared `~/.agents/skills` (read by Codex, Gemini CLI,
+OpenCode, Copilot and others) and into `~/.claude/skills` and `~/.codex/skills` when
+you use those agents — the same layout Omarchy uses for its own skills. Windows gets
+copies instead of links. Odin never replaces an `odin` skill it did not create,
+and updates its copy when you upgrade Odin.
+
+The skill bundles this manual, the theme guide and the example config, so answers
+match your Odin version. Agents without skill support can still read it: every Odin
+pane sets **`$ODIN_DOCS`** to the manual's path. You can read it yourself with `:docs`.
+
+| Do it yourself | |
+| --- | --- |
+| `odin --install-skill` / `:skill` | Install or refresh now (without launching an agent) |
+| `odin --remove-skill` / `:skill remove` | Remove every link and copy Odin made |
+| `ai_skill = false` | Never install it automatically |
 
 ## AI authentication
 
@@ -844,6 +873,7 @@ theme immediately. The configuration supports:
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
+| `ai_skill` | `true` | Install the [Odin skill](#ask-your-ai-agent-about-odin) for your AI agents when you launch one |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |
 | `[plugins.name]` | None | Explicit `program` and `args` for `:run name` |
 

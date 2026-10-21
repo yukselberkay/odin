@@ -124,6 +124,8 @@ pub struct Config {
     pub restore_session: bool,
     /// Where new AI panes open: "right" (side by side) or "below" (stacked).
     pub ai_split: String,
+    /// Install the Odin skill (interactive docs) for AI agents when one is launched.
+    pub ai_skill: bool,
     /// Your own AI launchers: `[ai.<name>] program = "…" args = […] env = {…}`.
     /// `[ai.local]` is used by the launcher's "Local LLM" entry.
     pub ai: BTreeMap<String, crate::local_ai::Launcher>,
@@ -148,6 +150,7 @@ impl Default for Config {
             git_pane: false,
             restore_session: true,
             ai_split: "right".into(),
+            ai_skill: true,
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),
             lsp_enabled: true,

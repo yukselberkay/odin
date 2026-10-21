@@ -244,6 +244,8 @@ pub struct App {
     /// Buffer opened by browsing the sidebar, and its revision then. It is reused
     /// for the next browsed file unless it was opened with Enter or edited.
     peek: Option<(usize, u64)>,
+    /// The agent skill was installed or refreshed this session.
+    skill_ready: bool,
     /// Screen position of the editor cursor, recorded at draw time for popups.
     pub cursor_at: Option<(u16, u16)>,
     /// Positions to return to with Ctrl-o after go-to-definition.
@@ -320,6 +322,7 @@ impl App {
             menu: None,
             picker: None,
             peek: None,
+            skill_ready: false,
             cursor_at: None,
             jumps: Vec::new(),
             visual_from: Mode::Normal,
@@ -2345,6 +2348,10 @@ impl App {
             .collect()
     }
     fn launch(&mut self, program: &str, model: Option<&str>, split: Option<Axis>) -> Result<()> {
+        // Agents find Odin's docs as a skill; install or refresh it once per session.
+        if self.config.ai_skill && !self.skill_ready {
+            self.skill_ready = crate::skill::install().is_ok();
+        }
         let agent = self.agent_command(program, model, None, false)?;
         let (command, args, env) = agent.run;
         self.open_terminal_with(Some((&command, args)), &env, split)?;
@@ -2720,6 +2727,28 @@ impl App {
             },
             "format" | "fmt" => self.lsp_request(lsp::Kind::Format)?,
             "font" | "fonts" => self.font_command(arg)?,
+            "docs" | "manual" => {
+                crate::skill::write_source()?;
+                self.open(&crate::skill::manual())?;
+                self.notice("Odin manual · [ ] jump between headings · F1 for the shortcut guide");
+            }
+            "skill" => match arg {
+                "" | "install" => {
+                    let places = crate::skill::install()?;
+                    self.skill_ready = true;
+                    self.notice(format!(
+                        "Odin skill ready in {} agent folder(s) · ask your AI agent \"how do I … in Odin?\"",
+                        places.len()
+                    ));
+                }
+                "remove" => {
+                    let removed = crate::skill::remove()?;
+                    self.notice(format!(
+                        "Removed the Odin skill from {removed} place(s) · set ai_skill = false to keep it off"
+                    ));
+                }
+                _ => bail!("Use :skill, :skill install or :skill remove"),
+            },
             "lsp" => match arg {
                 "" => self.notice(self.lsp.report()),
                 "restart" => {

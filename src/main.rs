@@ -15,6 +15,7 @@ mod platform;
 mod quickdiff;
 mod remote;
 mod session;
+mod skill;
 mod terminal;
 mod textsize;
 mod ui;
@@ -82,7 +83,7 @@ fn main() -> Result<()> {
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-h" | "--help" => {
-                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --nested   Inside an Odin terminal, start a separate Odin instead of opening FILE there\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
+                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --nested   Inside an Odin terminal, start a separate Odin instead of opening FILE there\n  --install-skill  Teach your AI agents about Odin (Agent Skills; also automatic)\n  --remove-skill   Remove that skill again\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
                 return Ok(());
             }
             "-V" | "--version" => {
@@ -90,6 +91,20 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             "--demo" => demo = true,
+            "--install-skill" => {
+                for place in skill::install()? {
+                    println!("{}", place.display());
+                }
+                println!(
+                    "Odin skill installed for your AI agents (from {})",
+                    skill::source().display()
+                );
+                return Ok(());
+            }
+            "--remove-skill" => {
+                println!("Removed the Odin skill from {} place(s)", skill::remove()?);
+                return Ok(());
+            }
             "--fresh" => fresh = true,
             "--nested" => nested = true,
             _ if arg.starts_with('-') => bail!("Unknown option: {arg}"),

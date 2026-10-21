@@ -72,6 +72,11 @@ impl TerminalPane {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("ODIN", "1");
+        // Any agent can read Odin's manual here, with or without skill support.
+        let docs = crate::skill::manual();
+        if docs.is_file() {
+            command.env("ODIN_DOCS", docs);
+        }
         // `odin FILE` typed here opens FILE in this Odin.
         match crate::remote::address() {
             Some(socket) => command.env(crate::remote::VAR, socket),

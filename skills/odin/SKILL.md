@@ -1,0 +1,81 @@
+---
+name: odin
+description: >
+  Interactive documentation for Odin, the Rust terminal workspace (modal editor,
+  file explorer, Git sidebar, terminals, AI panes). Use whenever the user asks how
+  to do something in Odin — keyboard shortcuts, commands, config.toml settings,
+  themes, fonts and font size, opening Git, splits and panes, copy/paste, language
+  servers, Markdown preview, AI CLIs or local LLMs, Windows/macOS/Linux setup, or
+  troubleshooting — or says "in odin", or the ODIN environment variable is set
+  (the agent runs inside an Odin pane) and the question is about the editor or UI.
+---
+
+# Odin — answer "how do I …" questions
+
+You are the user's guide to Odin. Answer with the exact keys or commands, briefly,
+in the order the user presses them. Prefer showing over explaining.
+
+## How to answer
+
+1. **Give the shortest working path first** (`Ctrl-b g`, `:theme nord`), then one
+   line of context if useful. Use the user's words for the goal.
+2. **Say which mode it needs.** Editor keys like `dd` or `K` work in NORMAL mode
+   (press `Esc` first). `Ctrl-b` is a prefix: press and release it, then the next key.
+   From a terminal or AI pane, Odin commands are `Ctrl-b` then `:`.
+3. **Settings live in `config.toml`**: `~/.config/odin/config.toml` on Linux/macOS,
+   `%APPDATA%\odin\config.toml` on Windows, or `$XDG_CONFIG_HOME/odin/config.toml`.
+   Offer to make the edit yourself; keep valid TOML, change only the needed keys, and
+   put top-level keys above any `[table]`. Most settings apply on the next launch;
+   `:theme` applies and saves at once.
+4. **Never invent features.** If Odin can't do it, say so and give the closest real
+   option (a shell pane, a `[plugins.x]` command, an `[ai.x]` launcher).
+5. **Check details in `reference/`** before answering anything not covered below:
+   `reference/manual.md` (the full README), `reference/themes.md`,
+   `reference/config.example.toml`. Inside Odin, `$ODIN_DOCS` points to the manual.
+   Users can also read it in Odin with `:docs` or the docked `F1` field guide.
+
+## Quick answers
+
+| User asks | Answer |
+| --- | --- |
+| Make the font bigger / smaller | Fonts belong to the terminal Odin runs in. Usually **Ctrl+=** / **Ctrl+-** / **Ctrl+0** (Kitty: Ctrl+Shift+=; macOS: Cmd+=). In Odin, **`:font +`** / **`:font -`** resize live in Kitty, Alacritty and xterm; **`:font size 12`** saves a size into the terminal's config (foot, Ghostty, Kitty, Alacritty). `:font` shows what applies to the current terminal. |
+| Change the font (family) | **`:font family "JetBrainsMono Nerd Font"`** (on Omarchy this runs `omarchy font set`, for all terminals). **`:font list`** shows installed monospace fonts. Use a Nerd Font for the explorer icons; or set `icons = false`. |
+| Open Git / see changes | **`Ctrl-b g`** (or `:git`) focuses the Git panel: branch, changed files, commit graph. ↑↓ previews a changed file, Enter opens it, Tab switches Files/Git. Git in Odin is read-only: commit in a shell pane (**`Ctrl-b c`**), or add `[plugins.lazygit] program = "lazygit"` and run **`:run lazygit`**. |
+| Open a file | **`Ctrl-p`** then a path (Tab completes), or `:e path`, or **`Ctrl-e`** to the explorer → ↑↓ previews, Enter opens. |
+| Save / quit | **`Ctrl-s`** or `:w` · `:wq` · `:q` closes a pane · **`Ctrl-q`** / `:qa` quits · `:qa!` discards changes. |
+| Split the screen | **`Ctrl-b %`** side by side, **`Ctrl-b "`** stacked; `Ctrl-b` + arrows moves focus, `Ctrl-b Ctrl-arrows` resizes, `Ctrl-b z` zooms, `Ctrl-b x` closes. |
+| Open a terminal | **`Ctrl-b c`** (or `:term`). Shell = `$SHELL` on Unix, PowerShell on Windows; set `shell = "…"`. Scroll back with `Ctrl-b PgUp/PgDn`. |
+| Change theme | **`Ctrl-b t`** or `:themes` → ↑↓ previews live, type to filter, Enter keeps (saved). `:theme name` directly. Add themes as `.toml` or VS Code `.json` in the themes folder; Omarchy themes appear as `omarchy-<name>`, and `omarchy` follows the desktop. |
+| Copy / paste | Select with **Shift+arrows** or `v` / `V`; **`Ctrl-c`** copy, **`Ctrl-x`** cut, **`Ctrl-v`** paste (system clipboard). Nothing selected → Ctrl-c/x take the whole line. In shell panes use the terminal's own selection and Ctrl-Shift-V. |
+| Search | `/text` Enter, then `n` / `N`. |
+| Undo / redo | `u` / `Ctrl-r` (NORMAL mode). |
+| Jump to a line | `:42` or `42G`. With relative numbers (`:set rnu`): `15j` / `15k`, or `15` Enter / `15-`, or `:+15` / `:-15`. |
+| Run an AI agent | **`Ctrl-b a`** (beside) or **`Ctrl-b A`** (below) → 1 Codex, 2 Claude Code, 3 Gemini CLI, 4 Antigravity (`agy`), 5 Local LLM, 6–9 your own. Or `:ai claude below`. Default placement: `ai_split = "below"`. |
+| Use a local LLM | Key 5 / `:ai local [model]`: runs `[ai.local]`, else Ollama (`ollama run`) or LM Studio. Add any tool as `[ai.<name>] program, args ({model}), model, env` → it appears on keys 6–9 and as `:ai <name>`. |
+| Code intelligence (LSP) | Automatic for Rust, Go, Python, C/C++ once the server is installed (`rust-analyzer`, `gopls`, `pyright-langserver`, `clangd`). **`K`** hover, **`gd`** definition (`Ctrl-o` back), **`Ctrl-Space`** completion, `]d` / `[d` problems, `:format`, `:lsp` status. |
+| Preview Markdown | `.md` files open rendered. `e` edits, **`Ctrl-b m`** toggles, **`Ctrl-b M`** live preview beside the source. |
+| Show hidden files | Dotfiles show by default; `.` in the explorer toggles them (`show_hidden`). `.git`, `target`, `node_modules` stay hidden (open via `Ctrl-p`). |
+| See all shortcuts | **`F1`** docks the field guide beside your work (stays open; Alt-↑↓ scrolls). `:docs` opens the full manual rendered. |
+| Custom command | `[plugins.check] program = "cargo" args = ["check"]` → `:run check` opens it in a terminal pane. |
+| Hide the sidebar | `Ctrl-b s`; width: `sidebar_width = 34`. |
+| Relative line numbers | `:set rnu` (`:set nornu`); permanent: `relative_numbers = true`. |
+| Install / update Odin | `cargo install --path . --locked --force` from the source folder; Windows needs rustup (MSVC) and Git. |
+
+## Config keys
+
+`theme`, `sidebar_width` (29), `tab_width` (4), `shell`, `relative_numbers` (false),
+`icons` (true), `show_hidden` (true), `ai_split` ("right"/"below"), `ai_skill`
+(true — installs this skill), `lsp_enabled` (true), `[lsp.<rust|go|python|c>]`
+`program`/`args`, `[plugins.<name>]` `program`/`args`, `[ai.<name>]`
+`program`/`args`/`model`/`env`. Unknown keys are rejected, so check spelling.
+
+## Troubleshooting
+
+- **Boxes instead of icons** → the terminal font is not a Nerd Font: `:font family …`
+  with a Nerd Font, or `icons = false`.
+- **An AI CLI or language server "not installed"** → Odin prints the install command;
+  `:lsp` lists servers, `:lsp restart` retries.
+- **Colors look wrong** → use a truecolor terminal (`COLORTERM=truecolor`); unset
+  `NO_COLOR`.
+- **Key does nothing** → probably INSERT mode (press `Esc`) or a terminal pane has
+  focus (use `Ctrl-b` first).

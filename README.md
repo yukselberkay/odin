@@ -25,6 +25,39 @@ No Electron, no web service, no account required by Odin, no telemetry.
 
 ## Build from source
 
+### Install script
+
+On **macOS or Linux**, one script installs everything Odin needs and then Odin:
+
+```sh
+scripts/install.sh
+```
+
+Or, without a checkout (it clones Odin first):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/yukselberkay/odin/main/scripts/install.sh | bash
+```
+
+It installs, skipping whatever is already there:
+
+1. **A C compiler and linker, Git, curl, xz and fontconfig.** On macOS these come
+   with the Xcode Command Line Tools; if they're missing, macOS opens its
+   installer, and you run the script again when it's done. On Linux it uses the
+   system package manager (apt, dnf, yum, pacman, zypper or apk) through `sudo`.
+2. **Rust**, through [rustup](https://rustup.rs), or `rustup update stable` when
+   the installed Rust is older than 1.88. Rust from a distribution package that
+   is too old is reported, not replaced.
+3. **rust-analyzer**, for Rust diagnostics, hover and completion in the editor
+   (`--no-lsp` skips it).
+4. **JetBrains Mono Nerd Font**, Odin's [font](#fonts): Homebrew's cask on macOS
+   when Homebrew is installed, otherwise the latest Nerd Fonts release into
+   `~/Library/Fonts` or `~/.local/share/fonts` (`--no-font` skips it).
+5. **Odin**, built with `cargo install --locked` into `~/.cargo/bin/odin`.
+
+Run it as yourself, not with `sudo`; it asks for `sudo` only for system packages.
+To do the same steps by hand, read on.
+
 ### 1. Prerequisites
 
 Odin runs on **Linux, macOS and Windows 10/11** (see [Windows](#windows) for the

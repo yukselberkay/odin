@@ -621,12 +621,32 @@ the project root, and talks to it in the background. Install the server once:
 | Go to definition | `gd` opens the definition (even in another file); `Ctrl-o` jumps back |
 | Completion | `Ctrl-Space` in insert mode, or automatically after `.` |
 | Format | `:format` formats the file with the server's formatter (rustfmt, gofmt, clang-format…) |
+| Tidy on save | Go files are tidied every time you save, as in VS Code: [details below](#go-tidy-on-save) |
 | Status | The pane footer names the server and counts errors/warnings; `:lsp` lists every language; `:lsp restart` restarts them |
 
 A missing server is reported once, with its install command, and never interrupts
 editing. C/C++ projects give clangd the best results with a `compile_commands.json`
 (CMake: `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`). To use a different server, or turn
 LSP off, see `lsp` and `lsp_enabled` in [config.example.toml](config.example.toml).
+
+#### Go: tidy on save
+
+Saving a `.go` file (`Ctrl-s`, `:w`, `:wq`, `:wa`) first lets **gopls** do what VS Code's
+Go extension does on save:
+
+1. **Organize imports** (like `goimports`): add missing imports, remove unused ones,
+   and sort and group them.
+2. **Format** the file (`gofmt`): tabs, spacing and alignment.
+
+Then the file is written. Both steps are ordinary edits, so `u` undoes them. The
+status line says what happened (`imports organized and formatted by gopls`). If gopls
+isn't installed, fails, or takes longer than two seconds (it may while loading a
+large module), the file is saved exactly as typed and the status line says why.
+`:w other.go` (a different name) also saves the text as is.
+
+The languages are listed in `format_on_save` (default `["go"]`). Add `"rust"`,
+`"python"` or `"c"` to do the same with their servers, or set `format_on_save = []`
+to turn it off.
 
 ### Markdown preview
 
@@ -968,6 +988,7 @@ theme immediately. The configuration supports:
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
+| `format_on_save` | `["go"]` | Languages whose files get imports organized and formatting from their server on save ([Go: tidy on save](#go-tidy-on-save)) |
 | `ai_skill` | `true` | Keep the [Odin skill](#ask-your-ai-agent-about-odin) installed for the AI agents on this machine (at startup and when you launch one) |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |
 | `[plugins.name]` | None | Explicit `program` and `args` for `:run name` |

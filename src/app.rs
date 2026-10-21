@@ -955,16 +955,86 @@ impl App {
             .buffer_id()
             .or_else(|| self.preview_buffer())
             .context("Focus an editor pane to save")?;
+        // Saving under another name (:w path) writes the text as it is.
+        let tidied = if path.is_none() {
+            self.tidy_on_save(id)
+        } else {
+            None
+        };
         self.buffers[id].save(path)?;
         self.lsp.saved(id, &self.buffers[id]);
         self.notice(format!(
-            "Saved {} · {} lines",
+            "Saved {} · {} lines{}",
             self.buffers[id].name(),
-            self.buffers[id].lines()
+            self.buffers[id].lines(),
+            tidied.unwrap_or_default()
         ));
         self.tree.refresh()?;
         self.last_git = Instant::now() - Duration::from_secs(5);
         Ok(())
+    }
+    /// Like VS Code with Go: before saving a file of a `format_on_save` language, ask
+    /// its server to organize the imports, then to format the file, and apply both.
+    /// Gives up after two seconds or on an error and saves the text as it is.
+    /// Returns a note for the status line, or `None` when the file isn't covered.
+    fn tidy_on_save(&mut self, id: usize) -> Option<String> {
+        let key = self.buffers[id]
+            .path
+            .as_deref()
+            .and_then(lsp::language_key)?;
+        if !self.config.lsp_enabled || !self.config.format_on_save.iter().any(|l| l == key) {
+            return None;
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        // The server must have the file open before it can work on it.
+        for event in self.lsp.sync(&self.buffers, &[id]) {
+            self.lsp_event(event);
+        }
+        // Not every server organizes imports; formatting still runs without it.
+        let organized = self.edits_from_server(lsp::Kind::OrganizeImports, id, deadline);
+        let formatted = self.edits_from_server(lsp::Kind::Format, id, deadline);
+        let program = self.lsp.program(key).unwrap_or("language server");
+        Some(match (organized, formatted) {
+            (_, Err(error)) => format!(" · not formatted: {error:#}"),
+            (Ok(_), Ok(_)) => format!(" · imports organized and formatted by {program}"),
+            (Err(_), Ok(_)) => format!(" · formatted by {program}"),
+        })
+    }
+
+    /// Ask the server for `kind`'s edits to buffer `id` and apply them, handling any
+    /// other server messages that arrive meanwhile.
+    fn edits_from_server(&mut self, kind: lsp::Kind, id: usize, deadline: Instant) -> Result<()> {
+        self.lsp
+            .request(kind, id, &self.buffers[id], self.config.tab_width)?;
+        loop {
+            let (events, _) = self.lsp.poll(&self.buffers);
+            let mut answer = None;
+            for event in events {
+                match event {
+                    lsp::Event::Organized { buffer, edits }
+                        if buffer == id && kind == lsp::Kind::OrganizeImports =>
+                    {
+                        answer = Some(Ok(edits));
+                    }
+                    lsp::Event::Format { buffer, edits }
+                        if buffer == id && kind == lsp::Kind::Format =>
+                    {
+                        answer = Some(Ok(edits));
+                    }
+                    lsp::Event::Error(text) if answer.is_none() => answer = Some(Err(text)),
+                    other => self.lsp_event(other),
+                }
+            }
+            match answer {
+                Some(Ok(edits)) => {
+                    self.buffers[id].apply_edits(edits);
+                    return Ok(());
+                }
+                Some(Err(text)) => bail!("{text}"),
+                None if Instant::now() >= deadline => bail!("the language server took too long"),
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
     }
     pub fn tick(&mut self) {
         let visible: Vec<usize> = self
@@ -2076,6 +2146,8 @@ impl App {
                 });
                 self.menu_filter();
             }
+            // Asked for on save, which applies them itself; a late answer is dropped.
+            lsp::Event::Organized { .. } => {}
             lsp::Event::Format { buffer, edits } => {
                 let count = edits.len();
                 if let Some(b) = self.buffers.get_mut(buffer) {
@@ -2757,10 +2829,11 @@ impl App {
         match verb {
             "w" | "write" => self.save((!arg.is_empty()).then(|| self.root.join(arg)))?,
             "wa" => {
-                for (id, buffer) in self.buffers.iter_mut().enumerate() {
-                    if buffer.dirty {
-                        buffer.save(None)?;
-                        self.lsp.saved(id, buffer);
+                for id in 0..self.buffers.len() {
+                    if self.buffers[id].dirty {
+                        self.tidy_on_save(id);
+                        self.buffers[id].save(None)?;
+                        self.lsp.saved(id, &self.buffers[id]);
                     }
                 }
                 self.notice("Saved all modified buffers");
@@ -4088,5 +4161,85 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
         press(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
         assert!(app.copy.is_none() && app.message.contains("v / V select"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn go_files_are_organized_and_formatted_on_save() {
+        if crate::platform::which("python3").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.go");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path.clone()), false).unwrap();
+        let mut servers = BTreeMap::new();
+        servers.insert(
+            "go".to_string(),
+            config::CommandPlugin {
+                program: "python3".into(),
+                args: vec!["-c".into(), lsp::FAKE_SERVER.into()],
+            },
+        );
+        app.lsp = Lsp::new(dir.path().into(), true, servers);
+        app.config.lsp_enabled = true;
+        app.config.format_on_save = vec!["go".into()];
+        press(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+        // The scripted server adds an import after line 1, then formats `fn` as `pub fn`.
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "pub fn main() {}\nuse std::fmt;\n"
+        );
+        assert!(
+            app.message
+                .contains("imports organized and formatted by python3"),
+            "{}",
+            app.message
+        );
+        // Languages not listed save exactly as typed.
+        app.config.format_on_save.clear();
+        let id = app.buffer_id().unwrap();
+        app.buffers[id].replace(0, 0, "x");
+        press(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .starts_with("xpub fn"));
+    }
+
+    /// The real thing, when gopls is installed: goimports and gofmt on save.
+    #[cfg(unix)]
+    #[test]
+    fn gopls_tidies_go_code_on_save() {
+        if crate::platform::which("gopls").is_none() || crate::platform::which("go").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::write(root.join("go.mod"), "module example.com/tidy\n\ngo 1.21\n").unwrap();
+        let path = root.join("main.go");
+        let messy = "package main\n\nimport (\n\t\"os\"\n\t\"fmt\"\n)\n\nfunc main() {\nx:=strings.ToUpper(\"hi\")\n    fmt.Println(x)\n}\n";
+        std::fs::write(&path, messy).unwrap();
+        let mut app = App::new(root.clone(), Some(path.clone()), false).unwrap();
+        app.lsp = Lsp::new(root.clone(), true, BTreeMap::new());
+        app.config.lsp_enabled = true;
+        app.config.format_on_save = vec!["go".into()];
+        // Let gopls start and load the module (the first save gives it two seconds).
+        let start = Instant::now();
+        while app.lsp.status(
+            app.buffer_id().unwrap(),
+            &app.buffers[app.buffer_id().unwrap()],
+        ) != Some("gopls".into())
+            && start.elapsed() < Duration::from_secs(20)
+        {
+            app.tick();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        press(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            saved,
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc main() {\n\tx := strings.ToUpper(\"hi\")\n\tfmt.Println(x)\n}\n",
+            "{}",
+            app.message
+        );
     }
 }

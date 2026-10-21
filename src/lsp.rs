@@ -26,6 +26,8 @@ pub enum Kind {
     Definition,
     Completion,
     Format,
+    /// The `source.organizeImports` code action (gopls: goimports).
+    OrganizeImports,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +76,11 @@ pub enum Event {
         buffer: usize,
         edits: Vec<(usize, usize, String)>,
     },
+    /// Edits that organize the imports of `buffer`.
+    Organized {
+        buffer: usize,
+        edits: Vec<(usize, usize, String)>,
+    },
     Notice(String),
     Error(String),
 }
@@ -81,6 +88,11 @@ pub enum Event {
 struct Language {
     key: &'static str,
     id: &'static str,
+}
+
+/// The language key (`go`, `rust`, `python`, `c`) of a file Odin has a server for.
+pub fn language_key(path: &Path) -> Option<&'static str> {
+    language(path).map(|l| l.key)
 }
 
 fn language(path: &Path) -> Option<Language> {
@@ -446,7 +458,10 @@ impl Lsp {
                             "hover": { "contentFormat": ["markdown", "plaintext"] },
                             "definition": { "linkSupport": true },
                             "completion": { "completionItem": { "snippetSupport": false } },
-                            "formatting": {}
+                            "formatting": {},
+                            "codeAction": { "codeActionLiteralSupport": { "codeActionKind": {
+                                "valueSet": ["source", "source.organizeImports"]
+                            } } }
                         },
                         "workspace": { "workspaceFolders": true }
                     }
@@ -615,9 +630,25 @@ impl Lsp {
                 "textDocument/formatting",
                 json!({ "textDocument": document, "options": { "tabSize": tab_width, "insertSpaces": true } }),
             ),
+            Kind::OrganizeImports => client.request(
+                "textDocument/codeAction",
+                json!({
+                    "textDocument": document,
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": buffer.lines(), "character": 0 }
+                    },
+                    "context": { "diagnostics": [], "only": ["source.organizeImports"] }
+                }),
+            ),
         };
         client.pending.insert(request, (kind, id));
         Ok(())
+    }
+
+    /// The program serving language `key`, once started.
+    pub fn program(&self, key: &str) -> Option<&str> {
+        self.clients.get(key).map(|c| c.program.as_str())
     }
 
     /// One line for the editor status: server name and state.
@@ -920,33 +951,62 @@ fn reply(kind: Kind, id: usize, buffer: &Buffer, result: &Value, utf32: bool) ->
                 items: items.into_iter().map(|(_, c)| c).collect(),
             })
         }
-        Kind::Format => {
-            let edits = result
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|edit| {
-                    let point = |which: &str| {
-                        let line =
-                            edit.pointer(&format!("/range/{which}/line"))?.as_u64()? as usize;
-                        let character = edit
-                            .pointer(&format!("/range/{which}/character"))?
-                            .as_u64()? as usize;
-                        if line >= buffer.lines() {
-                            return Some(buffer.text.len_chars());
-                        }
-                        Some(buffer.char_index(line, decode(&buffer.line(line), character, utf32)))
-                    };
-                    Some((
-                        point("start")?,
-                        point("end")?,
-                        edit["newText"].as_str()?.to_string(),
-                    ))
-                })
-                .collect();
-            Some(Event::Format { buffer: id, edits })
+        Kind::Format => Some(Event::Format {
+            buffer: id,
+            edits: text_edits(result, buffer, utf32),
+        }),
+        Kind::OrganizeImports => {
+            // Code actions carry a workspace edit; keep the edits for this file.
+            let this = buffer.path.as_deref();
+            let mine = |uri: &Value| {
+                let path = uri.as_str().and_then(path_from_uri);
+                path.is_some() && path.as_deref() == this
+                    || path
+                        .and_then(|p| p.canonicalize().ok())
+                        .is_some_and(|p| Some(p.as_path()) == this)
+            };
+            let mut edits = Vec::new();
+            for action in result.as_array().into_iter().flatten() {
+                let edit = &action["edit"];
+                for change in edit["documentChanges"].as_array().into_iter().flatten() {
+                    if mine(&change["textDocument"]["uri"]) {
+                        edits.extend(text_edits(&change["edits"], buffer, utf32));
+                    }
+                }
+                for (uri, list) in edit["changes"].as_object().into_iter().flatten() {
+                    if mine(&Value::String(uri.clone())) {
+                        edits.extend(text_edits(list, buffer, utf32));
+                    }
+                }
+            }
+            Some(Event::Organized { buffer: id, edits })
         }
     }
+}
+
+/// LSP `TextEdit`s as char ranges of `buffer`, with their new text.
+fn text_edits(list: &Value, buffer: &Buffer, utf32: bool) -> Vec<(usize, usize, String)> {
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|edit| {
+            let point = |which: &str| {
+                let line = edit.pointer(&format!("/range/{which}/line"))?.as_u64()? as usize;
+                let character = edit
+                    .pointer(&format!("/range/{which}/character"))?
+                    .as_u64()? as usize;
+                if line >= buffer.lines() {
+                    return Some(buffer.text.len_chars());
+                }
+                Some(buffer.char_index(line, decode(&buffer.line(line), character, utf32)))
+            };
+            Some((
+                point("start")?,
+                point("end")?,
+                edit["newText"].as_str()?.to_string(),
+            ))
+        })
+        .collect()
 }
 
 fn hover_text(contents: &Value) -> String {
@@ -1043,6 +1103,11 @@ while True:
         send({"jsonrpc": "2.0", "id": id, "result": {"items": [
             {"label": "println!", "insertText": "println!(${1:x})", "insertTextFormat": 2, "sortText": "2"},
             {"label": "print", "sortText": "1", "detail": "fn print()"}]}})
+    elif method == "textDocument/codeAction":
+        uri = msg["params"]["textDocument"]["uri"]
+        send({"jsonrpc": "2.0", "id": id, "result": [{"title": "Organize Imports", "kind": "source.organizeImports",
+            "edit": {"documentChanges": [{"textDocument": {"uri": uri, "version": 1}, "edits": [
+                {"range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 0}}, "newText": "use std::fmt;\n"}]}]}}]})
     elif method == "textDocument/formatting":
         send({"jsonrpc": "2.0", "id": id, "result": [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 2}}, "newText": "pub fn"}]})
 "#;
@@ -1176,6 +1241,16 @@ mod tests {
             panic!()
         };
         assert_eq!(edits, &vec![(0, 2, "pub fn".to_string())]);
+        // Organize imports: the code action's workspace edit, for this file.
+        lsp.request(Kind::OrganizeImports, 0, &buffers[0], 4)
+            .unwrap();
+        let events = wait(&mut lsp, &|_, e| !e.is_empty());
+        let Event::Organized { edits, buffer } = &events[0] else {
+            panic!("{:?}", events.len())
+        };
+        assert_eq!(*buffer, 0);
+        // Line 1 of "fn main() {\n    x;\n}\n" starts at char 12.
+        assert_eq!(edits, &vec![(12, 12, "use std::fmt;\n".to_string())]);
     }
 
     #[test]

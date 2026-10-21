@@ -140,6 +140,9 @@ pub struct Config {
     pub plugins: BTreeMap<String, CommandPlugin>,
     /// Language servers (diagnostics, hover, definition, completion, format).
     pub lsp_enabled: bool,
+    /// Languages whose files get their imports organized and are formatted by their
+    /// language server on save, as VS Code does for Go (keys: go, rust, python, c).
+    pub format_on_save: Vec<String>,
     /// Per-language server overrides: `[lsp.python] program = "pylsp"`.
     /// Keys: rust, go, python, c (C and C++).
     pub lsp: BTreeMap<String, CommandPlugin>,
@@ -164,6 +167,7 @@ impl Default for Config {
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),
             lsp_enabled: true,
+            format_on_save: vec!["go".into()],
             lsp: BTreeMap::new(),
         }
     }

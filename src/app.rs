@@ -2378,6 +2378,36 @@ impl App {
         let Some(Pane::Git(view)) = self.panes.get_mut(&self.focused) else {
             return Ok(());
         };
+        // A commit's diff is open: scroll it; Esc, q or Enter goes back to the graph.
+        if let Some(diff) = view.diff.as_mut() {
+            let page = diff.height.max(2) as isize;
+            match key.code {
+                KeyCode::Char('d') if ctrl => diff.scroll_by(page / 2),
+                KeyCode::Char('u') if ctrl => diff.scroll_by(-page / 2),
+                _ if ctrl => {}
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter | KeyCode::Backspace => {
+                    view.diff = None
+                }
+                KeyCode::Char('j') | KeyCode::Down => diff.scroll_by(1),
+                KeyCode::Char('k') | KeyCode::Up => diff.scroll_by(-1),
+                KeyCode::PageDown | KeyCode::Char(' ') => diff.scroll_by(page - 1),
+                KeyCode::PageUp => diff.scroll_by(1 - page),
+                KeyCode::Char('g') | KeyCode::Home => diff.scroll = 0,
+                KeyCode::Char('G') | KeyCode::End => diff.scroll_by(isize::MAX / 2),
+                KeyCode::Char('n') | KeyCode::Char(']') => diff.next_file(false),
+                KeyCode::Char('N') | KeyCode::Char('[') => diff.next_file(true),
+                KeyCode::Char('l') | KeyCode::Right => diff.hscroll += 8,
+                KeyCode::Char('h') | KeyCode::Left => diff.hscroll = diff.hscroll.saturating_sub(8),
+                KeyCode::Char('y') => {
+                    let hash = diff.hash.clone();
+                    self.clipboard.copy(hash.clone(), false);
+                    self.notice(format!("Copied {hash}"));
+                }
+                KeyCode::Char(':') => self.input_start(InputKind::Command),
+                _ => {}
+            }
+            return Ok(());
+        }
         let page = view.height.max(2) as isize;
         match key.code {
             KeyCode::Char('d') if ctrl => view.step(page / 2),
@@ -2397,7 +2427,7 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => view.step(isize::MAX / 2),
             KeyCode::Enter => match view.focus {
                 gitgraph::Focus::Branches => view.toggle_only(),
-                gitgraph::Focus::Commits => view.details = !view.details,
+                gitgraph::Focus::Commits => view.open_diff(),
             },
             KeyCode::Char('d') => view.details = !view.details,
             KeyCode::Char('a') | KeyCode::Esc => view.show_all(),
@@ -4241,5 +4271,94 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
             "{}",
             app.message
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn enter_on_a_commit_shows_its_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Ada",
+                    "-c",
+                    "user.email=ada@example.com",
+                    "-C",
+                ])
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        git(&["init", "-q"]);
+        std::fs::write(
+            root.join("main.go"),
+            "package main\n\nfunc main() {\n\tprintln(1)\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("notes.txt"), "keep\ndrop\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "first"]);
+        std::fs::write(
+            root.join("main.go"),
+            "package main\n\nfunc main() {\n\tprintln(2)\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("notes.txt"), "keep\n").unwrap();
+        git(&["commit", "-qam", "second: print two"]);
+        let mut app = App::new(root.clone(), None, false).unwrap();
+        app.git_pane().unwrap();
+        let git_id = app.focused;
+        let view = |app: &App| match app.panes.get(&git_id) {
+            Some(Pane::Git(view)) => view.data.commits.len(),
+            _ => 0,
+        };
+        for _ in 0..300 {
+            app.tick();
+            if view(&app) == 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The newest commit is selected; Enter opens its diff (maximized for room).
+        app.zoom = true;
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        for _ in 0..300 {
+            app.tick();
+            if let Some(Pane::Git(v)) = app.panes.get(&git_id) {
+                if v.diff.as_ref().is_some_and(|d| !d.loading) {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let lines = screen(&mut app, 120, 40);
+        let all = lines.join("\n");
+        assert!(all.contains("second: print two"), "the message");
+        assert!(
+            all.contains("▌ main.go") && all.contains("▌ notes.txt"),
+            "file headings"
+        );
+        assert!(all.contains("+    println(2)"), "added line, tab expanded");
+        assert!(all.contains("-    println(1)"), "removed line");
+        assert!(all.contains("-drop"));
+        assert!(all.contains("2 files · +1 −2"), "totals in the title");
+        assert!(!lines.iter().any(|l| l.trim_matches(['│', ' ']) == "---"));
+        // Numbers: line 4 changed in both versions.
+        let added = lines
+            .iter()
+            .find(|l| l.contains("+    println(2)"))
+            .unwrap();
+        assert!(added.contains("   4 +"), "{added}");
+        // Esc goes back to the graph (n / N between files is covered in gitgraph).
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        let Some(Pane::Git(v)) = app.panes.get(&git_id) else {
+            unreachable!()
+        };
+        assert!(v.diff.is_none());
+        assert!(screen(&mut app, 120, 40)
+            .join("\n")
+            .contains("second: print two"));
     }
 }

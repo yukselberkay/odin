@@ -1301,6 +1301,112 @@ fn fit_line<'a>(spans: Vec<Span<'a>>, right: Span<'a>, width: usize, fill: Style
     Line::from(out)
 }
 
+/// A commit's diff in the Git pane: message, file summary, then each file's hunks
+/// with old and new line numbers, added lines green and removed lines red.
+fn commit_diff(frame: &mut Frame, diff: &mut gitgraph::Diff, area: Rect, theme: &Theme) {
+    use gitgraph::Line as Kind;
+    if area.height < 2 {
+        return;
+    }
+    let fg = color(&theme.foreground);
+    let muted = color(&theme.muted);
+    let background = color(&theme.background);
+    let added = change_color(Change::Added, theme);
+    let removed = change_color(Change::Deleted, theme);
+    let short: String = diff.hash.chars().take(9).collect();
+    let (file, files) = diff.position();
+    let title = if diff.loading {
+        format!("── {short} · loading… ")
+    } else {
+        let place = match file {
+            0 => format!("{files} file{}", if files == 1 { "" } else { "s" }),
+            n => format!("file {n}/{files}"),
+        };
+        format!(
+            "── {short} · {place} · +{} −{} · n N files  j k scroll  h l sideways  Esc back ",
+            diff.added, diff.removed
+        )
+    };
+    text(
+        frame,
+        Rect::new(area.x, area.y, area.width, 1),
+        format!("{title}{}", "─".repeat(area.width as usize)),
+        color(&theme.border),
+    );
+    let rows = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+    diff.height = rows.height as usize;
+    diff.scroll_by(0);
+    // Line numbers when there is room for them and the code.
+    let gutter = if rows.width >= 60 { 10 } else { 0 };
+    let tint = |c: Color| crate::markdown::mix(background, c, 0.14);
+    for (offset, line) in diff
+        .lines
+        .iter()
+        .skip(diff.scroll)
+        .take(rows.height as usize)
+        .enumerate()
+    {
+        let y = rows.y + offset as u16;
+        let (style, row_bg) = match line.kind {
+            Kind::Added => (Style::default().fg(added), Some(tint(added))),
+            Kind::Removed => (Style::default().fg(removed), Some(tint(removed))),
+            Kind::Context => (Style::default().fg(fg), None),
+            Kind::Hunk => (Style::default().fg(color(&theme.secondary)), None),
+            Kind::File => (
+                Style::default()
+                    .fg(color(&theme.accent))
+                    .add_modifier(Modifier::BOLD),
+                Some(color(&theme.selection)),
+            ),
+            Kind::Meta | Kind::Stat => (Style::default().fg(muted), None),
+            Kind::Message => (Style::default().fg(fg), None),
+        };
+        if let Some(bg) = row_bg {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(bg)),
+                Rect::new(rows.x, y, rows.width, 1),
+            );
+        }
+        let style = row_bg.map_or(style, |bg| style.bg(bg));
+        let number = |n: Option<usize>| n.map_or(String::new(), |n| n.to_string());
+        let mut spans = Vec::new();
+        // The message and summary aren't code: no line-number column for them.
+        if gutter > 0 && !matches!(line.kind, Kind::Message | Kind::Stat) {
+            spans.push(Span::styled(
+                format!("{:>4} {:>4} ", number(line.old), number(line.new)),
+                Style::default().fg(muted).bg(row_bg.unwrap_or(background)),
+            ));
+        }
+        let body: String = match line.kind {
+            Kind::File => format!(" ▌ {}", line.text),
+            Kind::Message => format!(" {}", line.text),
+            _ => line.text.chars().skip(diff.hscroll).collect(),
+        };
+        if line.kind == Kind::Stat {
+            // " path | 12 ++--": the bar in the change colors.
+            if let Some((name, bar)) = body.split_once(" | ") {
+                spans.push(Span::styled(format!("{name} | "), style));
+                for ch in bar.chars() {
+                    let c = match ch {
+                        '+' => added,
+                        '-' => removed,
+                        _ => muted,
+                    };
+                    spans.push(Span::styled(ch.to_string(), Style::default().fg(c)));
+                }
+            } else {
+                spans.push(Span::styled(body, style));
+            }
+        } else {
+            spans.push(Span::styled(body, style));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(rows.x, y, rows.width, 1),
+        );
+    }
+}
+
 fn git_view(frame: &mut Frame, view: &mut GitView, area: Rect, theme: &Theme) {
     let fg = color(&theme.foreground);
     let muted = color(&theme.muted);
@@ -1377,6 +1483,10 @@ fn git_view(frame: &mut Frame, view: &mut GitView, area: Rect, theme: &Theme) {
         area.width,
         area.height.saturating_sub(1),
     );
+    if let Some(diff) = view.diff.as_mut() {
+        commit_diff(frame, diff, body, theme);
+        return;
+    }
     let detail_height = if view.details && body.height >= 12 {
         body.height * 2 / 5
     } else {
@@ -1717,8 +1827,12 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
             " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus {
             " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
+        } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(v)) if v.diff.is_some())
+            && !app.sidebar_focus
+        {
+            " j k scroll   Space PgDn page   n N next/previous file   h l sideways   g G top/end   y copy hash   Esc graph   ^B G maximize"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(_))) && !app.sidebar_focus {
-            " Tab branches/commits   j k move   Enter show branch / details   a all   y copy hash   r refresh   ^B G maximize"
+            " Tab branches/commits   j k move   Enter branch only / commit diff   d details   a all   y copy hash   r refresh   ^B G maximize"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Preview(_)))
             && !app.sidebar_focus
         {
@@ -1829,7 +1943,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ),
         (
             ":git  or  Ctrl-b G",
-            "Git pane: branches, graph, details; again maximizes",
+            "Git pane: branches, graph; Enter on a commit shows its diff",
         ),
         (
             ":session [save|forget]",

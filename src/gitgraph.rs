@@ -1,7 +1,8 @@
 //! The Git pane: every branch with its upstream state, a commit graph with one color
-//! per lane, and the selected commit's full message and changed files. Git runs on
-//! worker threads, like the sidebar's status, so a slow repository never blocks keys.
-use crate::workspace::{git, printable};
+//! per lane, and the selected commit's full message and changed files. Enter on a
+//! commit shows its whole diff. Git runs on worker threads, like the sidebar's
+//! status, so a slow repository never blocks keys.
+use crate::workspace::{git, git_limited, printable};
 use std::{
     collections::HashSet,
     path::PathBuf,
@@ -86,6 +87,8 @@ pub struct GitView {
     pub details: bool,
     /// Full message and changed files of the selected commit: (hash, lines).
     pub detail: Option<(String, Vec<String>)>,
+    /// The diff of a commit, shown over the graph (Enter on a commit; Esc closes it).
+    pub diff: Option<Diff>,
     receiver: Option<Receiver<Snapshot>>,
     detail_receiver: Option<Receiver<(String, Vec<String>)>>,
     last: Instant,
@@ -105,6 +108,7 @@ impl GitView {
             only: None,
             details: true,
             detail: None,
+            diff: None,
             receiver: None,
             detail_receiver: None,
             last: Instant::now(),
@@ -133,6 +137,9 @@ impl GitView {
             }
         } else if self.last.elapsed() >= REFRESH {
             self.refresh();
+        }
+        if let Some(diff) = &mut self.diff {
+            changed |= diff.poll();
         }
         if let Some(receiver) = &self.detail_receiver {
             match receiver.try_recv() {
@@ -219,6 +226,253 @@ impl GitView {
             self.refresh();
         }
     }
+
+    /// Show the selected commit's changes.
+    pub fn open_diff(&mut self) {
+        if let Some(commit) = self.selected() {
+            self.diff = Some(Diff::load(self.root.clone(), commit.hash.clone()));
+        }
+    }
+}
+
+/// How a diff line is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    /// The commit's author, date and message.
+    Message,
+    /// A file's line in the summary (`path | 12 ++--`).
+    Stat,
+    /// A changed file's heading.
+    File,
+    /// `new file`, `deleted file`, `rename from/to`, mode changes.
+    Meta,
+    /// `@@ -10,6 +10,8 @@`: where the following lines are.
+    Hunk,
+    Added,
+    Removed,
+    Context,
+}
+
+/// One line of a commit's diff, with its line numbers in the old and new file.
+pub struct DiffLine {
+    pub kind: Line,
+    pub text: String,
+    pub old: Option<usize>,
+    pub new: Option<usize>,
+}
+
+/// A commit's message, changed-file summary and patch, scrolled in the Git pane.
+pub struct Diff {
+    pub hash: String,
+    pub lines: Vec<DiffLine>,
+    /// Index of each file heading, for jumping between files.
+    pub files: Vec<usize>,
+    pub added: usize,
+    pub removed: usize,
+    pub scroll: usize,
+    pub hscroll: usize,
+    /// Rows on screen, recorded at draw time for paging.
+    pub height: usize,
+    pub loading: bool,
+    receiver: Option<Receiver<Vec<DiffLine>>>,
+}
+
+/// Larger diffs (lockfiles, generated code) are cut off rather than slow the pane.
+const DIFF_LINES: usize = 20_000;
+
+impl Diff {
+    fn load(root: PathBuf, hash: String) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let target = hash.clone();
+        thread::spawn(move || {
+            let text = git_limited(
+                &root,
+                &[
+                    "show",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "-M",
+                    "--stat=200",
+                    "--patch",
+                    "--date=format:%Y-%m-%d %H:%M",
+                    "--format=%an <%ae>  %ad%n%n%B",
+                    &target,
+                ],
+                8 * 1024 * 1024,
+            );
+            let lines = match text {
+                Some(bytes) => parse_diff(&String::from_utf8_lossy(&bytes)),
+                None => vec![DiffLine {
+                    kind: Line::Meta,
+                    text: "Could not read this commit".into(),
+                    old: None,
+                    new: None,
+                }],
+            };
+            let _ = sender.send(lines);
+        });
+        Self {
+            hash,
+            lines: Vec::new(),
+            files: Vec::new(),
+            added: 0,
+            removed: 0,
+            scroll: 0,
+            hscroll: 0,
+            height: 20,
+            loading: true,
+            receiver: Some(receiver),
+        }
+    }
+
+    fn poll(&mut self) -> bool {
+        let Some(receiver) = &self.receiver else {
+            return false;
+        };
+        match receiver.try_recv() {
+            Ok(lines) => {
+                self.set(lines);
+                true
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.receiver = None;
+                self.loading = false;
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+        }
+    }
+
+    fn set(&mut self, lines: Vec<DiffLine>) {
+        self.receiver = None;
+        self.loading = false;
+        self.files = (0..lines.len())
+            .filter(|&i| lines[i].kind == Line::File)
+            .collect();
+        self.added = lines.iter().filter(|l| l.kind == Line::Added).count();
+        self.removed = lines.iter().filter(|l| l.kind == Line::Removed).count();
+        self.lines = lines;
+    }
+
+    pub fn scroll_by(&mut self, delta: isize) {
+        let last = self.lines.len().saturating_sub(self.height.max(1));
+        self.scroll = self.scroll.saturating_add_signed(delta).min(last);
+    }
+
+    /// `n` / `N`: the next / previous file's heading at the top; back from the first
+    /// file returns to the message.
+    pub fn next_file(&mut self, back: bool) {
+        let target = if back {
+            Some(
+                self.files
+                    .iter()
+                    .rev()
+                    .find(|&&i| i < self.scroll)
+                    .copied()
+                    .unwrap_or(0),
+            )
+        } else {
+            self.files.iter().find(|&&i| i > self.scroll).copied()
+        };
+        if let Some(line) = target {
+            self.scroll = line;
+            self.scroll_by(0);
+        }
+    }
+
+    /// Which file the top visible line belongs to, and how many there are.
+    pub fn position(&self) -> (usize, usize) {
+        let current = self.files.iter().filter(|&&i| i <= self.scroll).count();
+        (current, self.files.len())
+    }
+}
+
+/// Split `git show --stat --patch` output into styled lines with line numbers.
+fn parse_diff(text: &str) -> Vec<DiffLine> {
+    let mut lines = Vec::new();
+    let mut in_patch = false;
+    let (mut old, mut new) = (0, 0);
+    for raw in text.lines() {
+        if lines.len() >= DIFF_LINES {
+            lines.push(DiffLine {
+                kind: Line::Meta,
+                text: format!("… diff cut off after {DIFF_LINES} lines"),
+                old: None,
+                new: None,
+            });
+            break;
+        }
+        // Tabs become spaces (Go, Makefiles); other control characters are shown safely.
+        let text = printable(&raw.replace('\t', "    "));
+        let line = |kind, text: String, old, new| DiffLine {
+            kind,
+            text,
+            old,
+            new,
+        };
+        if let Some(rest) = raw.strip_prefix("diff --git ") {
+            in_patch = true;
+            // "a/old b/new": show the new path, or "old → new" for a rename.
+            let (from, to) = rest
+                .split_once(" b/")
+                .map(|(a, b)| (a.trim_start_matches("a/"), b))
+                .unwrap_or((rest, rest));
+            let name = if from == to {
+                to.to_string()
+            } else {
+                format!("{from} → {to}")
+            };
+            lines.push(line(Line::File, printable(&name), None, None));
+            continue;
+        }
+        if !in_patch {
+            // git puts "---" between the message and the file summary.
+            if raw == "---" {
+                continue;
+            }
+            let kind = if raw.contains(" | ") && raw.starts_with(' ') {
+                Line::Stat
+            } else {
+                Line::Message
+            };
+            lines.push(line(kind, text, None, None));
+            continue;
+        }
+        if raw.starts_with("index ") || raw.starts_with("--- ") || raw.starts_with("+++ ") {
+            continue;
+        }
+        if let Some(header) = raw.strip_prefix("@@") {
+            // @@ -old,count +new,count @@ context
+            let mut numbers = header.split_whitespace();
+            let start = |field: Option<&str>| {
+                field
+                    .and_then(|f| f[1..].split(',').next())
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .unwrap_or(1)
+            };
+            old = start(numbers.next());
+            new = start(numbers.next());
+            lines.push(line(Line::Hunk, text, None, None));
+            continue;
+        }
+        match raw.chars().next() {
+            Some('+') => {
+                lines.push(line(Line::Added, text, None, Some(new)));
+                new += 1;
+            }
+            Some('-') => {
+                lines.push(line(Line::Removed, text, Some(old), None));
+                old += 1;
+            }
+            Some(' ') => {
+                lines.push(line(Line::Context, text, Some(old), Some(new)));
+                old += 1;
+                new += 1;
+            }
+            _ => lines.push(line(Line::Meta, text, None, None)),
+        }
+    }
+    lines
 }
 
 fn load(root: PathBuf, only: Option<String>) -> Receiver<Snapshot> {
@@ -523,6 +777,66 @@ fn age_at(now: i64, time: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diffs_are_split_into_files_hunks_and_numbered_lines() {
+        let text = "Ada <ada@example.com>  2026-10-21 10:00\n\n    Tidy imports\n\n src/main.go | 3 ++-\n 1 file changed\n\ndiff --git a/src/main.go b/src/main.go\nindex 1..2 100644\n--- a/src/main.go\n+++ b/src/main.go\n@@ -3,3 +3,4 @@ import (\n \t\"fmt\"\n-\t\"os\"\n+\t\"strings\"\n+\t\"time\"\n )\ndiff --git a/old.txt b/new.txt\nsimilarity index 90%\nrename from old.txt\nrename to new.txt\n";
+        let lines = parse_diff(text);
+        let kinds: Vec<Line> = lines.iter().map(|l| l.kind).collect();
+        assert_eq!(kinds[0], Line::Message);
+        assert!(kinds.contains(&Line::Stat));
+        let file = lines.iter().position(|l| l.kind == Line::File).unwrap();
+        assert_eq!(lines[file].text, "src/main.go");
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.text.starts_with("index ") || l.text.starts_with("+++")),
+            "plumbing lines are left out"
+        );
+        let numbered: Vec<(Line, Option<usize>, Option<usize>)> = lines
+            .iter()
+            .filter(|l| matches!(l.kind, Line::Added | Line::Removed | Line::Context))
+            .map(|l| (l.kind, l.old, l.new))
+            .collect();
+        assert_eq!(
+            numbered,
+            [
+                (Line::Context, Some(3), Some(3)),
+                (Line::Removed, Some(4), None),
+                (Line::Added, None, Some(4)),
+                (Line::Added, None, Some(5)),
+                (Line::Context, Some(5), Some(6)),
+            ]
+        );
+        // Tabs are expanded so Go code lines up.
+        assert!(lines.iter().any(|l| l.text == "+    \"strings\""));
+        let renamed = lines
+            .iter()
+            .filter(|l| l.kind == Line::File)
+            .nth(1)
+            .unwrap();
+        assert_eq!(renamed.text, "old.txt → new.txt");
+        // Jumping between files and counting changes.
+        let mut diff = Diff {
+            hash: "abc".into(),
+            lines: Vec::new(),
+            files: Vec::new(),
+            added: 0,
+            removed: 0,
+            scroll: 0,
+            hscroll: 0,
+            height: 3,
+            loading: true,
+            receiver: None,
+        };
+        diff.set(lines);
+        assert_eq!((diff.added, diff.removed, diff.files.len()), (2, 1, 2));
+        diff.next_file(false);
+        assert_eq!(diff.scroll, diff.files[0]);
+        assert_eq!(diff.position(), (1, 2));
+        diff.next_file(true);
+        assert_eq!(diff.scroll, 0);
+    }
 
     fn commit(hash: &str, parents: &[&str]) -> Commit {
         Commit {

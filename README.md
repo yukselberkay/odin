@@ -471,6 +471,10 @@ the **Git pane**, docked full-width along the bottom:
   merges. Refs appear as badges (`◉ main` checked out, local branches, `origin/…`
   remotes, `◆ v1.0` tags), then the subject, author and age.
 - **Details** — the selected commit's author, date, full message and changed files.
+- **Changes** — Enter on a commit shows its whole diff: the message and file summary,
+  then each changed file with its hunks, old and new line numbers, added lines in
+  green and removed lines in red (the same colors as the editor's change marks).
+  Renames show as `old → new`, and tabs are expanded so Go code lines up.
 
 It refreshes every few seconds while you work. Press `Ctrl-b G` while it is focused
 to maximize it (same as `Ctrl-b z`) and again to put it back; set `git_pane = true`
@@ -480,11 +484,25 @@ to have it open on every start.
 | --- | --- |
 | Tab | Switch between the branch list and the commit graph |
 | Up/Down or `k`/`j`, PageUp/PageDown, `g`/`G` | Move; selecting a branch jumps to its newest commit |
-| Enter | On a branch: show only its history (again: all); on a commit: show/hide details |
+| Enter | On a branch: show only its history (again: all); on a commit: show its changes |
 | `a` or Escape | Show all branches again |
 | `d` | Show/hide the details panel |
 | `y` | Copy the selected commit hash |
 | `r` | Refresh now |
+
+In a commit's changes:
+
+| Key | Action |
+| --- | --- |
+| `j`/`k`, Up/Down, Space/PageDown/PageUp, `Ctrl-d`/`Ctrl-u` | Scroll |
+| `n` / `N` (or `]` / `[`) | Next / previous file (back from the first file: the message) |
+| `h` / `l` | Scroll long lines sideways |
+| `g` / `G` | Top / bottom |
+| `y` | Copy the commit hash |
+| Escape, `q` or Enter | Back to the graph |
+
+Very large commits are cut off after 20,000 lines. `Ctrl-b G` maximizes the pane for
+more room.
 
 ### Editor: normal mode
 

@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Build and install Odin with everything it needs on this machine (macOS or Linux):
 # a C compiler and linker, Git, curl, Rust (via rustup), rust-analyzer,
-# JetBrains Mono Nerd Font, and then Odin itself (~/.cargo/bin/odin).
+# JetBrains Mono Nerd Font, Odin itself (~/.cargo/bin/odin), and the Odin skill
+# that teaches AI agents how to use Odin.
 #
 # Run it from a checkout (scripts/install.sh) or piped from GitHub
 # (curl -fsSL …/scripts/install.sh | bash); outside a checkout it clones Odin
 # first. Safe to run again: anything already installed is kept as is.
 set -euo pipefail
 
-usage="Usage: install.sh [--no-font] [--no-lsp]
-Installs a C compiler, Git, curl, Rust, rust-analyzer, JetBrains Mono Nerd Font
-and Odin on macOS or Linux.
+usage="Usage: install.sh [--no-font] [--no-lsp] [--no-skill]
+Installs a C compiler, Git, curl, Rust, rust-analyzer, JetBrains Mono Nerd Font,
+Odin and its AI agent skill on macOS or Linux.
   --no-font   skip JetBrains Mono Nerd Font
-  --no-lsp    skip rust-analyzer"
+  --no-lsp    skip rust-analyzer
+  --no-skill  skip the Odin skill for AI agents"
 
 REPO_URL="https://github.com/yukselberkay/odin.git"
 FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz"
@@ -21,10 +23,12 @@ MIN_RUST="1.88"
 
 with_font=1
 with_lsp=1
+with_skill=1
 for arg in "$@"; do
     case "$arg" in
         --no-font) with_font=0 ;;
         --no-lsp) with_lsp=0 ;;
+        --no-skill) with_skill=0 ;;
         -h | --help)
             echo "$usage"
             exit 0
@@ -237,6 +241,19 @@ install_odin() {
     esac
 }
 
+# Odin's docs as an Agent Skills skill, so Claude Code, Codex, Gemini CLI and others
+# can answer "how do I … in Odin?" in any project. Optional: Odin works without it,
+# and a failure here never fails the install.
+install_skill() {
+    step "Odin skill for AI agents"
+    local log="$scratch/skill.log"
+    if "$HOME/.cargo/bin/odin" --install-skill >"$log" 2>&1; then
+        ok "installed for this user (every project): $(grep -c '/odin$' "$log") place(s)"
+    else
+        note "skipped ($(tail -n 1 "$log")); run odin --install-skill later"
+    fi
+}
+
 summary() {
     step "Done"
     echo "  Start Odin in any project:  odin ~/path/to/project"
@@ -260,4 +277,7 @@ if [ "$with_font" -eq 1 ]; then
     install_font
 fi
 install_odin
+if [ "$with_skill" -eq 1 ]; then
+    install_skill
+fi
 summary

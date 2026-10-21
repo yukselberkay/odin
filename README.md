@@ -54,6 +54,8 @@ It installs, skipping whatever is already there:
    when Homebrew is installed, otherwise the latest Nerd Fonts release into
    `~/Library/Fonts` or `~/.local/share/fonts` (`--no-font` skips it).
 5. **Odin**, built with `cargo install --locked` into `~/.cargo/bin/odin`.
+6. **The [Odin skill](#ask-your-ai-agent-about-odin)** for AI agents, for every project
+   of your user (`--no-skill` skips it; a failure here only warns).
 
 Run it as yourself, not with `sudo`; it asks for `sudo` only for system packages.
 To do the same steps by hand, read on.
@@ -767,13 +769,24 @@ your config for you).
 
 The skill uses the open [Agent Skills](https://agentskills.io) format (`SKILL.md`),
 so it works with **Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot** and any
-other agent that reads skills. Odin installs it the first time you launch an AI pane:
-one copy in Odin's data folder (`~/.local/share/odin/skills/odin`; `%APPDATA%\odin` on
-Windows), linked into the shared `~/.agents/skills` (read by Codex, Gemini CLI,
-OpenCode, Copilot and others) and into `~/.claude/skills` and `~/.codex/skills` when
-you use those agents — the same layout Omarchy uses for its own skills. Windows gets
-copies instead of links. Odin never replaces an `odin` skill it did not create,
-and updates its copy when you upgrade Odin.
+other agent that reads skills. It is installed **once per user, not per project**, so
+every project on the machine has it; there is nothing in a project's `.odin` folder.
+It lives in Odin's data folder (`~/.local/share/odin/skills/odin`,
+`~/Library/Application Support/odin/…` on macOS, `%APPDATA%\odin` on Windows), linked
+into the shared `~/.agents/skills` (read by Codex, Gemini CLI, OpenCode, Copilot and
+others) and into `~/.claude/skills` and `~/.codex/skills` when Claude Code or Codex is
+installed or has been used, so even an agent's very first session finds it. This is
+the same layout Omarchy uses for its own skills. Windows gets copies instead of
+links. Odin never replaces an `odin` skill it did not create.
+
+It gets there, and stays current with your Odin version:
+
+- **`scripts/install.sh`** installs it as its last step (`--no-skill` skips it). If
+  that step fails, the script only warns: Odin is installed either way.
+- **Each time Odin starts**, it refreshes the skill in the background, but only when
+  an AI agent is installed or has been used on the machine. Without one, Odin
+  leaves the agents' folders alone, and nothing in Odin needs an agent.
+- **Launching an agent** from Odin's launcher checks it again.
 
 The skill bundles this manual, the theme guide and the example config, so answers
 match your Odin version. Agents without skill support can still read it: every Odin
@@ -783,7 +796,7 @@ pane sets **`$ODIN_DOCS`** to the manual's path. You can read it yourself with `
 | --- | --- |
 | `odin --install-skill` / `:skill` | Install or refresh now (without launching an agent) |
 | `odin --remove-skill` / `:skill remove` | Remove every link and copy Odin made |
-| `ai_skill = false` | Never install it automatically |
+| `ai_skill = false` | Never install or refresh it automatically |
 
 ## AI authentication
 
@@ -955,7 +968,7 @@ theme immediately. The configuration supports:
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
-| `ai_skill` | `true` | Install the [Odin skill](#ask-your-ai-agent-about-odin) for your AI agents when you launch one |
+| `ai_skill` | `true` | Keep the [Odin skill](#ask-your-ai-agent-about-odin) installed for the AI agents on this machine (at startup and when you launch one) |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |
 | `[plugins.name]` | None | Explicit `program` and `args` for `:run name` |
 

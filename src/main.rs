@@ -178,6 +178,16 @@ fn main() -> Result<()> {
             app.open(path)?;
         }
     }
+    // Keep the Odin skill current for the AI agents installed here (Claude Code or
+    // Codex installed after Odin, or a newer Odin), without waiting for Odin's
+    // launcher. Machines without an agent are left alone.
+    if app.config.ai_skill {
+        std::thread::spawn(|| {
+            if skill::agents_present() {
+                let _ = skill::install();
+            }
+        });
+    }
     // Odin's own font for this window while it runs; the terminal's comes back on exit.
     let _font = textsize::WindowFont::apply(&app.config.font, app.config.font_size);
     // Restore the user's terminal even on panic; no shell or raw escape output survives.

@@ -45,14 +45,46 @@ pub fn manual() -> PathBuf {
 /// Skills folders to link into: the shared one, plus Claude Code's and Codex's own
 /// folders when those agents are set up (Odin never creates config for tools you
 /// don't use). Agents that read `~/.agents/skills` need nothing else.
-fn targets(home: &Path) -> Vec<PathBuf> {
+/// Agent CLIs, and the settings folders that show one has been used.
+const AGENT_PROGRAMS: &[&str] = &["claude", "codex", "gemini", "agy", "opencode", "copilot"];
+const AGENT_HOMES: &[&str] = &[
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".copilot",
+    ".config/opencode",
+];
+
+/// Whether any AI agent is installed or has been used here. Without one, Odin
+/// leaves the agents' folders alone.
+pub fn agents_present() -> bool {
+    let Some(home) = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf()) else {
+        return false;
+    };
+    AGENT_PROGRAMS
+        .iter()
+        .any(|p| crate::platform::which(p).is_some())
+        || AGENT_HOMES.iter().any(|d| home.join(d).is_dir())
+}
+
+/// Skill folders to link into. `installed` says whether an agent's program is on
+/// PATH: a fresh install of Claude Code or Codex has no settings folder until its
+/// first run, and its first session should already find the skill.
+fn targets(home: &Path, installed: &dyn Fn(&str) -> bool) -> Vec<PathBuf> {
     let mut dirs = vec![home.join(".agents/skills")];
-    for (agent_home, skills) in [(".claude", ".claude/skills"), (".codex", ".codex/skills")] {
-        if home.join(agent_home).is_dir() {
+    for (program, agent_home, skills) in [
+        ("claude", ".claude", ".claude/skills"),
+        ("codex", ".codex", ".codex/skills"),
+    ] {
+        if home.join(agent_home).is_dir() || installed(program) {
             dirs.push(home.join(skills));
         }
     }
     dirs
+}
+
+fn on_path(program: &str) -> bool {
+    crate::platform::which(program).is_some()
 }
 
 /// Folders that also read `~/.agents/skills`: an Odin link here would duplicate the
@@ -119,7 +151,7 @@ pub fn install() -> Result<Vec<PathBuf>> {
     for dir in redundant(&home) {
         unlink(&dir, &source)?;
     }
-    install_into(&source, &targets(&home))
+    install_into(&source, &targets(&home, &on_path))
 }
 
 fn install_into(source: &Path, targets: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -188,7 +220,11 @@ pub fn remove() -> Result<usize> {
         .map(|d| d.home_dir().to_path_buf())
         .context("No home directory")?;
     let mut removed = 0;
-    for dir in targets(&home).into_iter().chain(redundant(&home)) {
+    // Every place Odin could have linked it, whatever is installed now.
+    for dir in targets(&home, &|_| true)
+        .into_iter()
+        .chain(redundant(&home))
+    {
         removed += usize::from(unlink(&dir, &source)?);
     }
     if source.join(MARKER).is_file() {
@@ -212,6 +248,23 @@ mod tests {
     }
 
     #[test]
+    fn a_freshly_installed_agent_gets_the_skill_before_its_first_run() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        // Claude Code is on PATH but has never run: no ~/.claude yet.
+        let claude = |program: &str| program == "claude";
+        let dirs = targets(home, &claude);
+        assert!(dirs.contains(&home.join(".claude/skills")));
+        assert!(!dirs.contains(&home.join(".codex/skills")));
+        let source = home.join("data/odin/skills/odin");
+        write_files(&source).unwrap();
+        install_into(&source, &dirs).unwrap();
+        assert!(home.join(".claude/skills/odin/SKILL.md").is_file());
+        // No agent at all: only the shared folder.
+        assert_eq!(targets(home.join("empty").as_path(), &|_| false).len(), 1);
+    }
+
+    #[test]
     fn installs_for_present_agents_and_respects_foreign_skills() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
@@ -221,7 +274,8 @@ mod tests {
         fs::write(home.join(".codex/skills/odin/SKILL.md"), "mine").unwrap();
         let source = home.join("data/odin/skills/odin");
         write_files(&source).unwrap();
-        let dirs = targets(home);
+        let none = |_: &str| false;
+        let dirs = targets(home, &none);
         // .agents always; .claude and .codex exist; Gemini reads .agents, so no link.
         assert!(dirs.contains(&home.join(".agents/skills")));
         assert!(dirs.contains(&home.join(".claude/skills")));

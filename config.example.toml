@@ -26,7 +26,8 @@ font = "JetBrainsMono Nerd Font Mono"
 font_size = 14
 # Where AI panes open: "right" (side by side) or "below" (stacked).
 ai_split = "right"
-# Teach your AI agents about Odin (an Agent Skills skill, installed on first launch).
+# Teach your AI agents about Odin (an Agent Skills skill for every project; kept
+# current at startup when an AI agent is installed, and when you launch one).
 ai_skill = true
 # shell = "/bin/zsh"
 

@@ -122,6 +122,19 @@ fn install_hint(key: &str) -> &'static str {
     }
 }
 
+/// Why a server stopped. rustup installs a `rust-analyzer` proxy that fails until the
+/// component is added; say how to add it rather than only echoing rustup.
+fn stopped(program: &str, key: &str, detail: &str) -> String {
+    if detail.contains("Unknown binary") || detail.contains("is not installed") {
+        format!(
+            "{program} is not installed for this toolchain · install: {} · then :lsp restart",
+            install_hint(key)
+        )
+    } else {
+        format!("{program} stopped: {detail} · :lsp restart retries")
+    }
+}
+
 pub(crate) fn on_path(program: &str) -> bool {
     crate::platform::which(program).is_some()
 }
@@ -665,7 +678,7 @@ impl Lsp {
                         } else {
                             reason
                         };
-                        let text = format!("{program} stopped: {detail} · :lsp restart retries");
+                        let text = stopped(&program, key, &detail);
                         self.clients.remove(key);
                         self.docs.retain(|_, d| d.key != key);
                         self.failed.insert(key, text.clone());
@@ -1163,6 +1176,21 @@ mod tests {
             panic!()
         };
         assert_eq!(edits, &vec![(0, 2, "pub fn".to_string())]);
+    }
+
+    #[test]
+    fn a_rustup_proxy_without_its_component_says_how_to_add_it() {
+        let detail = "error: Unknown binary 'rust-analyzer' in official toolchain 'stable-aarch64-apple-darwin'.";
+        let message = stopped("rust-analyzer", "rust", detail);
+        assert!(
+            message.contains("rustup component add rust-analyzer"),
+            "{message}"
+        );
+        assert!(message.contains(":lsp restart"));
+        assert_eq!(
+            stopped("gopls", "go", "crashed"),
+            "gopls stopped: crashed · :lsp restart retries"
+        );
     }
 
     #[test]

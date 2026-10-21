@@ -67,6 +67,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Length(2),
         ])
         .split(area);
+    // Copy view: only the focused pane's text, so a mouse selection takes nothing else.
+    let bare = app.copy_view.is_some();
     let root = app.root.file_name().unwrap_or_default().to_string_lossy();
     let title = Line::from(vec![
         Span::styled(
@@ -81,11 +83,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Style::default().fg(color(&theme.muted)),
         ),
     ]);
-    frame.render_widget(
-        Paragraph::new(title),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    if area.width > 110 {
+    if !bare {
+        frame.render_widget(
+            Paragraph::new(title),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+    }
+    if area.width > 110 && !bare {
         let right = format!(
             "{}  ·  {} panes  ·  v0.1.0 ",
             if app.git.branch.is_empty() {
@@ -102,9 +106,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Rect::new(area.x + area.width - 45, area.y, 45, 1),
         );
     }
-    let body = layout[1];
+    let body = if bare { area } else { layout[1] };
     // On narrower screens the open guide takes the sidebar's room.
-    let sidebar_shown = app.sidebar_visible && area.width >= 70 && !(app.help && area.width < 140);
+    let sidebar_shown =
+        !bare && app.sidebar_visible && area.width >= 70 && !(app.help && area.width < 140);
     let content = if sidebar_shown {
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -119,7 +124,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         body
     };
     // The guide docks on the right so the panes and command line stay usable.
-    let content = if app.help {
+    let content = if app.help && !bare {
         let width = if content.width >= 110 {
             (content.width * 45 / 100).clamp(56, 86)
         } else if content.width >= 70 {
@@ -136,7 +141,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         content
     };
     app.rectangles.clear();
-    if app.zoom {
+    if app.zoom || bare {
         app.rectangles.push((app.focused, content));
     } else {
         app.tiles.rectangles(content, &mut app.rectangles);
@@ -171,7 +176,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 " {} {}{} ",
                 id + 1,
                 t.title,
-                if t.exited.is_some() {
+                if app.copy.as_ref().is_some_and(|c| c.pane == id) {
+                    " · COPY"
+                } else if t.exited.is_some() {
                     " · exited"
                 } else {
                     " · live"
@@ -187,9 +194,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ),
             _ => format!(" {} AI / copilot ", id + 1),
         };
-        let block = panel(title, &theme, active);
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
+        let inner = if bare {
+            rect
+        } else {
+            let block = panel(title, &theme, active);
+            let inner = block.inner(rect);
+            frame.render_widget(block, rect);
+            inner
+        };
         if inner.width < 2 || inner.height < 1 {
             continue;
         }
@@ -197,7 +209,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Some(Pane::Editor(buffer_id)) => {
                 let buffer_id = *buffer_id;
                 let buffer = &mut app.buffers[buffer_id];
-                let footer = inner.height > 3;
+                let footer = !bare && inner.height > 3;
                 let height = inner.height - u16::from(footer);
                 if buffer.row < buffer.scroll {
                     buffer.scroll = buffer.row;
@@ -233,6 +245,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     active && app.input.is_none(),
                     app.config.relative_numbers,
                     app.config.tab_width,
+                    bare,
                 );
                 if active {
                     app.cursor_at = cursor;
@@ -270,6 +283,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     }
                 }
             }
+            Some(Pane::Terminal(_)) if app.copy.as_ref().is_some_and(|c| c.pane == id) => {
+                if let Some(mode) = app.copy.as_mut() {
+                    copy_mode(frame, mode, inner, &theme);
+                }
+            }
             Some(Pane::Terminal(terminal)) => {
                 let _ = terminal.resize(inner.height, inner.width);
                 if let Ok(parser) = terminal.parser.lock() {
@@ -280,29 +298,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                                 if cell.is_wide_continuation() {
                                     continue;
                                 }
-                                let mut style = Style::default()
-                                    .fg(term_color(
-                                        cell.fgcolor(),
-                                        color(&theme.foreground),
-                                        &theme,
-                                    ))
-                                    .bg(term_color(
-                                        cell.bgcolor(),
-                                        color(&theme.background),
-                                        &theme,
-                                    ));
-                                if cell.bold() {
-                                    style = style.add_modifier(Modifier::BOLD);
-                                }
-                                if cell.italic() {
-                                    style = style.add_modifier(Modifier::ITALIC);
-                                }
-                                if cell.underline() {
-                                    style = style.add_modifier(Modifier::UNDERLINED);
-                                }
-                                if cell.inverse() {
-                                    style = style.add_modifier(Modifier::REVERSED);
-                                }
+                                let style = cell_style(cell, &theme);
                                 let contents = cell.contents();
                                 let symbol = if contents.is_empty() { " " } else { &contents };
                                 let x = inner.x + col;
@@ -329,7 +325,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         }
                     }
                 }
-                if let Some(exit) = &terminal.exited {
+                if let Some(exit) = terminal.exited.as_ref().filter(|_| !bare) {
                     text(
                         frame,
                         Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
@@ -340,7 +336,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             Some(Pane::Preview(preview)) => {
                 let buffer = &app.buffers[preview.buffer];
-                let footer = inner.height > 3;
+                let footer = !bare && inner.height > 3;
                 let height = (inner.height - u16::from(footer)) as usize;
                 // One column for the scrollbar, at least two of margin per side.
                 let room = (inner.width as usize).saturating_sub(5);
@@ -377,7 +373,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         color(&theme.muted),
                     );
                 }
-                if max > 0 && height > 1 {
+                if max > 0 && height > 1 && !bare {
                     let x = inner.right() - 1;
                     let thumb = (height * height / doc.lines.len()).max(1);
                     let at = preview.scroll * (height - thumb) / max;
@@ -419,7 +415,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
         }
     }
-    footer(frame, app, layout[2]);
+    match app.copy_view {
+        None => footer(frame, app, layout[2]),
+        // A reminder for the first moments only, so it can't end up in a copy.
+        Some(since) if since.elapsed() < std::time::Duration::from_secs(2) => {
+            let hint = " Copy view · select with the mouse · Ctrl-b Z returns ";
+            let width = (hint.chars().count() as u16).min(area.width);
+            frame.render_widget(
+                Paragraph::new(hint).style(
+                    Style::default()
+                        .fg(color(&theme.background))
+                        .bg(color(&theme.accent)),
+                ),
+                Rect::new(area.right() - width, area.bottom() - 1, width, 1),
+            );
+        }
+        Some(_) => {}
+    }
     if app.picker.is_some() {
         theme_picker(frame, app, area);
     }
@@ -506,6 +518,60 @@ fn theme_picker(frame: &mut Frame, app: &App, area: Rect) {
             Paragraph::new(line),
             Rect::new(inner.x, inner.y + 1 + offset as u16, inner.width, 1),
         );
+    }
+}
+
+/// A terminal cell's colors and attributes in the theme.
+fn cell_style(cell: &vt100::Cell, theme: &Theme) -> Style {
+    let mut style = Style::default()
+        .fg(term_color(cell.fgcolor(), color(&theme.foreground), theme))
+        .bg(term_color(cell.bgcolor(), color(&theme.background), theme));
+    if cell.bold() {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if cell.italic() {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if cell.underline() {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    if cell.inverse() {
+        style = style.add_modifier(Modifier::REVERSED);
+    }
+    style
+}
+
+/// A terminal pane in copy mode: the frozen history, the selection and the cursor.
+fn copy_mode(frame: &mut Frame, mode: &mut crate::copymode::CopyMode, area: Rect, theme: &Theme) {
+    mode.height = area.height as usize;
+    mode.follow();
+    let selected = color(&theme.selection);
+    for offset in 0..area.height {
+        let row = mode.top + offset as usize;
+        let Some((cells, _)) = mode.rows.get(row) else {
+            break;
+        };
+        for (col, cell) in cells.iter().enumerate().take(area.width as usize) {
+            if cell.is_wide_continuation() {
+                continue;
+            }
+            let mut style = cell_style(cell, theme);
+            if mode.selected(row, col) {
+                style = style.bg(selected).fg(color(&theme.foreground));
+            }
+            if row == mode.row && col == mode.col {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            let contents = cell.contents();
+            let symbol = if contents.is_empty() { " " } else { &contents };
+            frame.buffer_mut().set_stringn(
+                area.x + col as u16,
+                area.y + offset,
+                symbol,
+                area.width as usize - col,
+                style,
+            );
+        }
     }
 }
 
@@ -742,9 +808,11 @@ fn editor(
     active: bool,
     relative: bool,
     tab_width: usize,
+    bare: bool,
 ) -> Option<(u16, u16)> {
     let digits = buffer.lines().to_string().len().max(3);
-    let gutter = (digits + 2) as u16;
+    // Copy view leaves out line numbers and marks: only the text is on screen.
+    let gutter = if bare { 0 } else { (digits + 2) as u16 };
     if area.width <= gutter {
         return None;
     }
@@ -761,12 +829,14 @@ fn editor(
         let row = buffer.scroll + offset as usize;
         let y = area.y + offset;
         if row >= buffer.lines() {
-            text(
-                frame,
-                Rect::new(area.x, y, gutter, 1),
-                "  ~",
-                color(&theme.border),
-            );
+            if !bare {
+                text(
+                    frame,
+                    Rect::new(area.x, y, gutter, 1),
+                    "  ~",
+                    color(&theme.border),
+                );
+            }
             continue;
         }
         let current_row = row == buffer.row;
@@ -781,39 +851,41 @@ fn editor(
         } else {
             row + 1
         };
-        text(
-            frame,
-            Rect::new(area.x, y, gutter, 1),
-            format!("{number:>digits$} {}", if current_row { "▎" } else { "│" }),
-            color(if current_row {
-                &theme.accent
-            } else {
-                theme.line_number.as_ref().unwrap_or(&theme.muted)
-            }),
-        );
-        // Quick diff: the separator becomes a colored bar on lines that differ from
-        // Git, and a red marker where lines were removed.
-        if let Some(Some(change)) = changes.get(row) {
-            let glyph = match change {
-                Change::Added | Change::Modified => "▌",
-                Change::Deleted => "▁",
-                Change::DeletedAbove => "▔",
-            };
-            text(
-                frame,
-                Rect::new(area.x + digits as u16 + 1, y, 1, 1),
-                glyph,
-                change_color(*change, theme),
-            );
-        }
         let marks: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.row == row).collect();
-        if let Some(worst) = marks.iter().map(|d| d.severity).min() {
+        if !bare {
             text(
                 frame,
-                Rect::new(area.x + digits as u16 + 1, y, 1, 1),
-                "●",
-                severity_color(theme, worst),
+                Rect::new(area.x, y, gutter, 1),
+                format!("{number:>digits$} {}", if current_row { "▎" } else { "│" }),
+                color(if current_row {
+                    &theme.accent
+                } else {
+                    theme.line_number.as_ref().unwrap_or(&theme.muted)
+                }),
             );
+            // Quick diff: the separator becomes a colored bar on lines that differ from
+            // Git, and a red marker where lines were removed.
+            if let Some(Some(change)) = changes.get(row) {
+                let glyph = match change {
+                    Change::Added | Change::Modified => "▌",
+                    Change::Deleted => "▁",
+                    Change::DeletedAbove => "▔",
+                };
+                text(
+                    frame,
+                    Rect::new(area.x + digits as u16 + 1, y, 1, 1),
+                    glyph,
+                    change_color(*change, theme),
+                );
+            }
+            if let Some(worst) = marks.iter().map(|d| d.severity).min() {
+                text(
+                    frame,
+                    Rect::new(area.x + digits as u16 + 1, y, 1, 1),
+                    "●",
+                    severity_color(theme, worst),
+                );
+            }
         }
         let raw = buffer.line(row);
         let regions = highlight
@@ -1550,6 +1622,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let mode = if app.prefix {
         "PREFIX"
+    } else if app.copy.is_some() {
+        "COPY"
     } else if app.help && app.help_focus {
         "GUIDE"
     } else if app.sidebar_focus {
@@ -1614,9 +1688,19 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
             Rect::new(area.x, area.y + 1, area.width, 1),
         );
         frame.set_cursor_position((area.x + (cols - skip) as u16, area.y + 1));
+    } else if let Some(query) = app.copy.as_ref().and_then(|c| c.typing.as_ref()) {
+        let value = format!("/{}", printable(query));
+        frame.render_widget(
+            Paragraph::new(value.clone()).style(Style::default().fg(color(&theme.accent))),
+            Rect::new(area.x, area.y + 1, area.width, 1),
+        );
+        let x = (value.chars().count() as u16).min(area.width.saturating_sub(1));
+        frame.set_cursor_position((area.x + x, area.y + 1));
     } else {
-        let hints = if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  +/-/0 text size  x close  ? help"
+        let hints = if app.copy.is_some() {
+            " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
+        } else if app.prefix {
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus {
             " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(_))) && !app.sidebar_focus {
@@ -1716,6 +1800,14 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             ":docs / ask your AI agent",
             "Full manual / agents know Odin via its skill (:skill)",
+        ),
+        (
+            "Ctrl-b [  then v V y",
+            "Copy mode in a terminal / AI pane: select, y copies",
+        ),
+        (
+            "Ctrl-b Z",
+            "Copy view: only this pane's text, for mouse selection",
         ),
         (
             "Ctrl-b g / PgUp / PgDn",

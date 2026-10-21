@@ -46,7 +46,7 @@ in the order the user presses them. Prefer showing over explaining.
 | Split the screen | **`Ctrl-b %`** side by side, **`Ctrl-b "`** stacked; `Ctrl-b` + arrows moves focus, `Ctrl-b Ctrl-arrows` resizes, `Ctrl-b z` zooms, `Ctrl-b x` closes. |
 | Open a terminal | **`Ctrl-b c`** (or `:term`). Shell = `$SHELL` on Unix, PowerShell on Windows; set `shell = "…"`. Scroll back with `Ctrl-b PgUp/PgDn`. |
 | Change theme | **`Ctrl-b t`** or `:themes` → ↑↓ previews live, type to filter, Enter keeps (saved). `:theme name` directly. Add themes as `.toml` or VS Code `.json` in the themes folder; Omarchy themes appear as `omarchy-<name>`, and `omarchy` follows the desktop. |
-| Copy / paste | Select with **Shift+arrows** or `v` / `V`; **`Ctrl-c`** copy, **`Ctrl-x`** cut, **`Ctrl-v`** paste (system clipboard). Nothing selected → Ctrl-c/x take the whole line. In shell panes use the terminal's own selection and Ctrl-Shift-V. |
+| Copy / paste | Select with **Shift+arrows** or `v` / `V`; **`Ctrl-c`** copy, **`Ctrl-x`** cut, **`Ctrl-v`** paste (system clipboard). Nothing selected → Ctrl-c/x take the whole line. From a terminal or AI pane: **`Ctrl-b [`** copy mode (move, `v`/`V` select, `y` copies, `/` `?` search scrollback), or **`Ctrl-b Z`** copy view (only that pane on screen, for mouse selection; again to return). Paste into a shell with the terminal's Ctrl-Shift-V / Cmd-V. |
 | Search | `/text` Enter, then `n` / `N`. |
 | Undo / redo | `u` / `Ctrl-r` (NORMAL mode). |
 | Jump to a line | `:42` or `42G`. With relative numbers (`:set rnu`): `15j` / `15k`, or `15` Enter / `15-`, or `:+15` / `:-15`. |

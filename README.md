@@ -341,6 +341,8 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
 | `Ctrl-b G` | Open the [Git pane](#git-pane); again focuses it, and when focused maximizes / restores it |
 | `Ctrl-b PageUp` / `PageDown` | Terminal scrollback |
+| `Ctrl-b [` | [Copy mode](#copying-from-terminal-and-ai-panes) in a terminal or AI pane |
+| `Ctrl-b Z` | [Copy view](#copying-from-terminal-and-ai-panes): only the focused pane's text; again to return |
 | `Ctrl-b b` | Send literal Ctrl-b to the terminal |
 | `Ctrl-b :` | Command prompt, including from terminal panes |
 | `F1` | Field guide beside your work, focused: ↑/↓ PgUp/PgDn scroll, Esc back to work (stays open); F1 refocuses / closes |
@@ -562,6 +564,39 @@ the terminal's OSC 52, which most terminals support, even over SSH).
 A Shift-selection made while typing behaves like any text field: typing replaces it
 and a plain arrow cancels it. Your terminal's own paste (often `Ctrl-Shift-V`)
 also works in any mode and inserts at the cursor.
+
+### Copying from terminal and AI panes
+
+Your terminal's mouse selection copies whole screen rows, so in a split layout it
+also picks up the explorer, borders and line numbers. Two ways around that:
+
+**Copy mode (`Ctrl-b [`, or `:copymode`)** freezes the focused terminal or AI pane,
+including its scrollback (2,000 lines), and gives you a cursor, like tmux:
+
+| Keys | Action |
+| --- | --- |
+| Arrows / `h` `j` `k` `l` | Move |
+| `w` / `b`, `0` / `^` / `$` | Next / previous word; line start / first character / end |
+| PageUp / PageDown, `Ctrl-u` / `Ctrl-d` | Page / half page |
+| `g` / `G` | Oldest line / bottom |
+| `/` / `?` then Enter, `n` / `N` | Search down / up (case-insensitive); next / previous match |
+| `v` / `V` | Select characters / whole lines (again to cancel) |
+| `y`, Enter or `Ctrl-c` | Copy the selection (or the cursor line) to the clipboard and leave |
+| `q` / Escape | Leave (Escape first clears a selection) |
+
+Lines the terminal wrapped are copied as one line, and the padding at line ends is
+dropped. Text a program wrapped itself (many AI CLIs do) keeps its line breaks. The
+pane keeps running underneath; leaving shows its live output again. `Ctrl-b` and
+`Ctrl-q` still work and leave copy mode first.
+
+**Copy view (`Ctrl-b Z`, or `:copyview`)** shows only the focused pane, edge to edge:
+no sidebar, header, status lines, borders, line numbers or change marks. Select
+with the mouse as usual, then `Ctrl-b Z` again to return. Keys keep working in the
+pane, so you can scroll a terminal with `Ctrl-b PageUp` while in it. A reminder
+shows for the first two seconds only, so it can't end up in a copy.
+
+In editors, select with `v` / `V` and copy with `y` instead: that copies the exact
+text, however long, without anything from the screen.
 
 ### Language servers (LSP)
 

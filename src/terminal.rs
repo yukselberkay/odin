@@ -166,6 +166,17 @@ impl TerminalPane {
     pub fn saved(&self) -> (String, Option<std::path::PathBuf>) {
         self.saved.clone().unwrap_or_default()
     }
+    /// Everything the pane holds (scrollback, then screen), the row its cursor is
+    /// on, and the first row it shows now (later when scrolled back), for copy mode.
+    pub fn history(&self) -> (Vec<Row>, usize, usize) {
+        let Ok(mut parser) = self.parser.lock() else {
+            return (Vec::new(), 0, 0);
+        };
+        let viewing = parser.screen().scrollback();
+        let cursor = usize::from(parser.screen().cursor_position().0);
+        let (rows, history) = rows(&mut parser);
+        (rows, history + cursor, history.saturating_sub(viewing))
+    }
     /// Screen and scrollback with colors, for saving the session.
     pub fn transcript(&self) -> String {
         match self.parser.lock() {
@@ -292,15 +303,18 @@ fn reflow(parser: &mut vt100::Parser, rows: u16, cols: u16) {
 /// The screen and scrollback as a byte stream that redraws them in any parser:
 /// rejoined lines with their colors. With `cursor`, it also puts the cursor back and
 /// restores the input modes and pen, for a live resize; without, it is a transcript.
-fn replay(parser: &mut vt100::Parser, cursor: bool) -> Vec<u8> {
+/// One terminal row: its cells, and whether it soft-wraps into the next row.
+pub type Row = (Vec<vt100::Cell>, bool);
+
+/// Every row from the oldest scrollback line down to the bottom of the screen, and
+/// how many of them are scrollback. The parser's scrollback view is left as it was.
+pub(crate) fn rows(parser: &mut vt100::Parser) -> (Vec<Row>, usize) {
     let viewing = parser.screen().scrollback();
     let (height, width) = parser.screen().size();
-    let (cursor_row, cursor_col) = parser.screen().cursor_position();
-    // Every row from the oldest scrollback line down, with its soft-wrap flag. A
-    // scrollback offset of `n` makes scrollback row `len - n` the first visible row.
+    // A scrollback offset of `n` makes scrollback row `len - n` the first visible row.
     parser.set_scrollback(usize::MAX);
     let history = parser.screen().scrollback();
-    let mut lines: Vec<(Vec<vt100::Cell>, bool)> = Vec::new();
+    let mut lines: Vec<Row> = Vec::new();
     let read_row = |parser: &vt100::Parser, row: u16| {
         let screen = parser.screen();
         let cells = (0..width).filter_map(|col| screen.cell(row, col).cloned());
@@ -315,6 +329,12 @@ fn replay(parser: &mut vt100::Parser, cursor: bool) -> Vec<u8> {
         lines.push(read_row(parser, row));
     }
     parser.set_scrollback(viewing);
+    (lines, history)
+}
+
+fn replay(parser: &mut vt100::Parser, cursor: bool) -> Vec<u8> {
+    let (cursor_row, cursor_col) = parser.screen().cursor_position();
+    let (mut lines, history) = rows(parser);
     let keep_cursor = cursor;
     let cursor = history + usize::from(cursor_row);
     // Blank rows below both the cursor and the last text are just unused screen.

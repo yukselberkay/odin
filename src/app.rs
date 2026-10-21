@@ -1,6 +1,7 @@
 use crate::{
     clipboard::Clipboard,
     config::{self, Config, Theme},
+    copymode,
     editor::Buffer,
     gitgraph::{self, GitView},
     highlight::Syntax,
@@ -271,6 +272,12 @@ pub struct App {
     pub remote: Option<crate::remote::Server>,
     /// Quick diff gutter marks, by buffer.
     pub diffs: HashMap<usize, quickdiff::State>,
+    /// Copy mode in a terminal pane (Ctrl-b [).
+    pub copy: Option<copymode::CopyMode>,
+    /// Copy view (Ctrl-b Z): only the focused pane's text, edge to edge, so the
+    /// terminal's own mouse selection picks up nothing else. Holds when it began,
+    /// for the hint shown briefly at the start.
+    pub copy_view: Option<Instant>,
 }
 
 impl App {
@@ -339,6 +346,8 @@ impl App {
             text_size_repeat: None,
             remote: None,
             diffs: HashMap::new(),
+            copy: None,
+            copy_view: None,
         };
         if let Some(path) = initial {
             app.open(&path)?;
@@ -1020,6 +1029,13 @@ impl App {
             }
         }
         self.redraw |= self.update_diffs(git_changed);
+        // Copy view's hint goes away after its first moments.
+        if self
+            .copy_view
+            .is_some_and(|since| (2..3).contains(&since.elapsed().as_secs()))
+        {
+            self.redraw = true;
+        }
         if self.git_receiver.is_none() && self.last_git.elapsed() >= Duration::from_secs(4) {
             self.git_receiver = Some(workspace::refresh_git(self.root.clone()));
             self.last_git = Instant::now();
@@ -1165,6 +1181,9 @@ impl App {
                 self.help_scroll = self.help_scroll.saturating_add_signed(step);
                 return Ok(());
             }
+        }
+        if self.copy.is_some() {
+            return self.copy_key(key);
         }
         if self.picker.is_some() {
             return self.picker_key(key);
@@ -1452,6 +1471,58 @@ impl App {
         self.end_visual();
         Ok(())
     }
+    /// Ctrl-b [: freeze the focused terminal pane and select from its history.
+    fn enter_copy_mode(&mut self) {
+        let Some(Pane::Terminal(terminal)) = self.panes.get(&self.focused) else {
+            self.notice(
+                "Copy mode is for terminal and AI panes; in editors, v / V select and y copies",
+            );
+            return;
+        };
+        let (rows, cursor, top) = terminal.history();
+        self.copy = Some(copymode::CopyMode::new(self.focused, rows, cursor, top));
+        self.sidebar_focus = false;
+        self.notice(
+            "Copy mode: move with arrows / hjkl, v or V selects, y copies, / ? search, q leaves",
+        );
+    }
+    fn copy_key(&mut self, key: KeyEvent) -> Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Ctrl-b and Ctrl-q still work: leave copy mode, then act on them.
+        if ctrl && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('q')) {
+            self.copy = None;
+            return self.key(key);
+        }
+        let Some(mode) = self.copy.as_mut() else {
+            return Ok(());
+        };
+        match mode.key(key) {
+            copymode::Outcome::Stay => {}
+            copymode::Outcome::Exit => self.copy = None,
+            copymode::Outcome::NotFound(query) => self.notice(format!("Not found: {query}")),
+            copymode::Outcome::Copy(text) => {
+                self.copy = None;
+                let lines = text.lines().count().max(1);
+                let chars = text.chars().count();
+                self.clipboard.copy(text, false);
+                self.notice(if lines > 1 {
+                    format!("Copied {lines} lines")
+                } else {
+                    format!("Copied {chars} characters")
+                });
+            }
+        }
+        Ok(())
+    }
+    /// Ctrl-b Z: the focused pane alone, without borders, sidebar, line numbers or
+    /// status lines, for selecting with the mouse; again to return.
+    fn toggle_copy_view(&mut self) {
+        self.copy_view = match self.copy_view {
+            Some(_) => None,
+            None => Some(Instant::now()),
+        };
+        self.sidebar_focus = false;
+    }
     fn prefix_key(&mut self, key: KeyEvent) -> Result<()> {
         if let Some(step) = match key.code {
             KeyCode::Char(c) => textsize::Step::key(c),
@@ -1487,6 +1558,8 @@ impl App {
             KeyCode::Char('t') => self.open_picker(),
             KeyCode::Char('M') => self.split_preview()?,
             KeyCode::Char('?') => self.toggle_help(),
+            KeyCode::Char('[') => self.enter_copy_mode(),
+            KeyCode::Char('Z') => self.toggle_copy_view(),
             KeyCode::Char(':') => self.input_start(InputKind::Command),
             KeyCode::Char('o') | KeyCode::Tab => self.cycle(),
             KeyCode::Char('b') => {
@@ -2760,6 +2833,8 @@ impl App {
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
             "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            "copymode" | "copy-mode" => self.enter_copy_mode(),
+            "copyview" | "copy-view" => self.toggle_copy_view(),
             "collapse" => {
                 self.tree.collapse_all()?;
                 self.notice("Explorer folders collapsed");
@@ -3918,5 +3993,100 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
             marks(&app).iter().all(Option::is_none),
             "staged changes are clean"
         );
+    }
+    fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn copy_view_shows_only_the_focused_panes_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "first line\nsecond line\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let normal = screen(&mut app, 100, 24).join("\n");
+        assert!(normal.contains("EXPLORER") && normal.contains("ODIN"));
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
+        assert!(app.copy_view.is_some());
+        let bare = screen(&mut app, 100, 24);
+        // Text from the first column, no numbers, borders, sidebar or status lines.
+        assert!(bare[0].starts_with("first line"), "{:?}", bare[0]);
+        assert!(bare[1].starts_with("second line"));
+        let all = bare.join("\n");
+        for chrome in ["EXPLORER", "GIT / TREE", "ODIN", "NORMAL", "│", "╭"] {
+            assert!(!all.contains(chrome), "{chrome} shows in copy view");
+        }
+        // Ctrl-b Z again returns.
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
+        assert!(app.copy_view.is_none());
+        assert!(screen(&mut app, 100, 24).join("\n").contains("EXPLORER"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_mode_selects_and_copies_from_a_terminal_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let long = format!("long-{}", "x".repeat(150));
+        let script = format!("printf 'alpha\\n{long}\\nomega\\n'; exec sleep 30");
+        app.open_terminal(
+            Some(("/bin/sh", vec!["-c".into(), script])),
+            Some(Axis::Vertical),
+        )
+        .unwrap();
+        let shell = app.focused;
+        for _ in 0..300 {
+            app.tick();
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            if t.transcript().contains("omega") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        screen(&mut app, 120, 30);
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
+        assert!(app.copy.is_some(), "Ctrl-b [ enters copy mode");
+        let shown = screen(&mut app, 120, 30).join("\n");
+        assert!(shown.contains("COPY"));
+        let keys = |app: &mut App, keys: &str| {
+            for c in keys.chars() {
+                let code = if c == '\n' {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Char(c)
+                };
+                press(app, code, KeyModifiers::NONE);
+            }
+        };
+        // From the long line (wrapped by the terminal) down to "omega", whole lines.
+        keys(&mut app, "?long\nV/omega\ny");
+        assert!(app.copy.is_none(), "y copies and leaves");
+        let (copied, _) = app.clipboard.paste();
+        assert_eq!(copied, format!("{long}\nomega"));
+        assert!(app.message.contains("Copied 2 lines"));
+        // q leaves without copying; editors explain where their copy is.
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
+        keys(&mut app, "q");
+        assert!(app.copy.is_none());
+        app.focused = 0;
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('['), KeyModifiers::NONE);
+        assert!(app.copy.is_none() && app.message.contains("v / V select"));
     }
 }

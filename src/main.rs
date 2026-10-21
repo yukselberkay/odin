@@ -1,6 +1,7 @@
 mod app;
 mod clipboard;
 mod config;
+mod copymode;
 mod editor;
 mod fonts;
 mod gitgraph;

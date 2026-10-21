@@ -389,6 +389,24 @@ A terminal program can't scale its own text, so Odin asks the terminal window:
 | kitty | `kitty @ set-font-size`, when remote control is on (`allow_remote_control` and `listen_on`) |
 | Others (iTerm2, Ghostty, WezTerm, Alacritty, Windows Terminal, …) | Odin names your terminal's own keys: Cmd-+ / Cmd-- / Cmd-0 on macOS, Ctrl-+ / Ctrl-- / Ctrl-0 elsewhere |
 
+### Fonts
+
+The font belongs to the terminal window Odin runs in, so `:font` changes it there:
+
+| Command | What it does |
+| --- | --- |
+| `:font` | Names your terminal and how its font is set |
+| `:font size 12` (or `:font 12`) | Saves the size in the terminal's config: foot (`foot.ini`), Ghostty, Kitty, Alacritty — Alacritty and Kitty also change at once |
+| `:font family "JetBrainsMono Nerd Font"` | On **Omarchy** runs `omarchy font set` (all terminals); elsewhere saves it in the terminal's config |
+| `:font list` | Installed monospace fonts |
+| `:font +` / `-` / `reset` | Same as `Ctrl-b +` / `-` / `0` above |
+
+Odin finds the terminal from its environment, or on Linux from the process that
+started it (foot under Omarchy sets no variable). Only the font lines change; the
+rest of the file is kept. For WezTerm, Windows Terminal and macOS terminals, `:font`
+says where the setting lives. Use a [Nerd Font](https://www.nerdfonts.com/) for the
+explorer icons.
+
 ### Git pane
 
 The sidebar shows a short summary. For the full picture, `:git` or `Ctrl-b G` opens
@@ -639,6 +657,7 @@ Set `restore_session = false` in `config.toml` to turn sessions off everywhere.
 :preview [split]          Rendered Markdown in place / beside the source
 :format                   Format the file with its language server
 :lsp / :lsp restart       Language server status / restart all servers
+:font [size N|family X|list]  Terminal font: show, save size or family, list fonts
 :set rnu / :set nornu     Relative / absolute line numbers
 :run name                 Launch an explicitly configured command plugin
 :git / :git all           Git pane: open, focus, or maximize / show all branches

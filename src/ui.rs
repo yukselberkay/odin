@@ -1710,6 +1710,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Text bigger / smaller / reset (repeat + or -); :zoom in/out",
         ),
         (
+            ":font size 12 / family X",
+            "Save font size / family in your terminal; :font list",
+        ),
+        (
             "Ctrl-b g / PgUp / PgDn",
             "Git sidebar / terminal scrollback",
         ),

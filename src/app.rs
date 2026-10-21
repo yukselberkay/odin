@@ -2411,6 +2411,42 @@ impl App {
             session,
         })
     }
+    /// `:font`, `:font + | - | reset` (zoom), `:font size N`, `:font family NAME`, `:font list`.
+    fn font_command(&mut self, arg: &str) -> Result<()> {
+        use crate::fonts;
+        if let Some(step) = textsize::Step::parse(arg) {
+            self.change_text_size(step);
+            return Ok(());
+        }
+        let term = fonts::detect();
+        let (verb, rest) = arg
+            .split_once(char::is_whitespace)
+            .map(|(a, b)| (a, b.trim()))
+            .unwrap_or((arg, ""));
+        let message = match verb {
+            "" => fonts::summary(term),
+            "size" => fonts::set_size(term, rest.parse().context("Usage: :font size 12")?)?,
+            "family" | "face" => fonts::set_family(term, rest)?,
+            "list" => {
+                let all = fonts::list()?;
+                let shown: Vec<&str> = all.iter().take(12).map(String::as_str).collect();
+                format!(
+                    "{} monospace fonts: {}{} · :font family \"Name\"",
+                    all.len(),
+                    shown.join(", "),
+                    if all.len() > shown.len() { ", …" } else { "" }
+                )
+            }
+            size if size.parse::<f32>().is_ok() => {
+                fonts::set_size(term, size.parse().expect("checked"))?
+            }
+            _ => bail!(
+                "Use :font, :font + / - / reset, :font size 12, :font family \"Name\", :font list"
+            ),
+        };
+        self.notice(message);
+        Ok(())
+    }
     fn toggle_help(&mut self) {
         self.help = !self.help;
         self.help_focus = self.help;
@@ -2683,6 +2719,7 @@ impl App {
                 _ => bail!("Use :preview or :preview split"),
             },
             "format" | "fmt" => self.lsp_request(lsp::Kind::Format)?,
+            "font" | "fonts" => self.font_command(arg)?,
             "lsp" => match arg {
                 "" => self.notice(self.lsp.report()),
                 "restart" => {

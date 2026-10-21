@@ -2,6 +2,7 @@ mod app;
 mod clipboard;
 mod config;
 mod editor;
+mod fonts;
 mod gitgraph;
 mod highlight;
 mod icons;

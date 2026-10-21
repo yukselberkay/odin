@@ -23,6 +23,8 @@ def main():
         if pid == 0:
             os.chdir(root)
             os.environ.update(TERM="xterm-256color", SHELL="/bin/sh", XDG_CONFIG_HOME=str(root / "config"))
+            # Run standalone even when started from inside an Odin terminal pane.
+            os.environ.pop("ODIN_SOCKET", None)
             os.execv(binary, [binary, str(source)])
         output = bytearray()
         exited = False

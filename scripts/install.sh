@@ -175,10 +175,12 @@ font_installed() {
     fi
 }
 
+# The font also carries the Nerd Font icons Odin's explorer shows by default
+# (icons = true picks them as soon as a Nerd Font is installed).
 install_font() {
-    step "$FONT_FAMILY"
+    step "$FONT_FAMILY (text and explorer icons)"
     if font_installed; then
-        ok "already installed"
+        ok "already installed; Odin's explorer uses its Nerd Font icons"
         return
     fi
     if [ "$os" = Darwin ] && have brew; then
@@ -201,7 +203,7 @@ install_font() {
         fi
     fi
     if font_installed; then
-        ok "installed"
+        ok "installed; Odin's explorer uses its Nerd Font icons"
     else
         note "installed, but not visible yet; log out and back in if your terminal doesn't list it"
     fi

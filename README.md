@@ -50,7 +50,8 @@ It installs, skipping whatever is already there:
    is too old is reported, not replaced.
 3. **rust-analyzer**, for Rust diagnostics, hover and completion in the editor
    (`--no-lsp` skips it).
-4. **JetBrains Mono Nerd Font**, Odin's [font](#fonts): Homebrew's cask on macOS
+4. **JetBrains Mono Nerd Font**, Odin's [font](#fonts) and the source of the explorer's
+   Nerd Font file icons, which Odin then shows by default (`icons = true`): Homebrew's cask on macOS
    when Homebrew is installed, otherwise the latest Nerd Fonts release into
    `~/Library/Fonts` or `~/.local/share/fonts` (`--no-font` skips it).
 5. **Odin**, built with `cargo install --locked` into `~/.cargo/bin/odin`.

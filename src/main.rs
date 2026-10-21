@@ -11,6 +11,7 @@ mod lsp;
 mod markdown;
 mod omarchy;
 mod platform;
+mod quickdiff;
 mod remote;
 mod session;
 mod terminal;

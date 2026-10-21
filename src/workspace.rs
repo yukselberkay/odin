@@ -334,6 +334,11 @@ impl GitInfo {
 
 // Git runs on a worker, with no shell and no repository-provided fsmonitor.
 pub(crate) fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    git_limited(root, args, 512 * 1024)
+}
+
+/// `git` keeping up to `limit` bytes of output.
+pub(crate) fn git_limited(root: &Path, args: &[&str], limit: usize) -> Option<Vec<u8>> {
     let mut child = Command::new("git")
         .arg("--no-optional-locks")
         .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-C"])
@@ -348,7 +353,7 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
     let reader = thread::spawn(move || {
         use std::io::Read;
         let mut bytes = Vec::new();
-        let _ = stdout.take(512 * 1024).read_to_end(&mut bytes);
+        let _ = stdout.take(limit as u64).read_to_end(&mut bytes);
         bytes
     });
     let start = Instant::now();

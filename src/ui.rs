@@ -5,6 +5,7 @@ use crate::{
     gitgraph::{self, Focus as GitFocus, GitView, RefKind},
     lsp::Diagnostic,
     markdown,
+    quickdiff::Change,
     workspace::{printable, Mark},
 };
 use ratatui::{
@@ -215,12 +216,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .get(&buffer_id)
                     .map(Vec::as_slice)
                     .unwrap_or_default();
+                let changes = app
+                    .diffs
+                    .get(&buffer_id)
+                    .map(|d| d.marks.as_slice())
+                    .unwrap_or_default();
                 let cursor = editor(
                     frame,
                     buffer,
                     lines,
                     selection,
                     diagnostics,
+                    changes,
                     Rect::new(inner.x, inner.y, inner.width, height),
                     &theme,
                     active && app.input.is_none(),
@@ -502,6 +509,16 @@ fn theme_picker(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+/// Quick diff gutter colors, VS Code's: green added, blue modified, red removed.
+pub(crate) fn change_color(change: Change, theme: &Theme) -> Color {
+    let ansi = |index: usize| theme.ansi.as_ref().map(|a| color(&a[index]));
+    match change {
+        Change::Added => ansi(10).unwrap_or_else(|| color(&theme.accent)),
+        Change::Modified => ansi(12).unwrap_or_else(|| color(&theme.secondary)),
+        Change::Deleted | Change::DeletedAbove => ansi(9).unwrap_or(Color::LightRed),
+    }
+}
+
 /// Explorer colors for Git marks, from the theme's terminal palette when it has one.
 pub(crate) fn mark_color(mark: Mark, theme: &Theme) -> Color {
     let ansi = |index: usize| theme.ansi.as_ref().map(|a| color(&a[index]));
@@ -719,6 +736,7 @@ fn editor(
     highlight: Option<&Vec<Vec<(syntect::highlighting::Style, String)>>>,
     selection: Option<(usize, usize)>,
     diagnostics: &[Diagnostic],
+    changes: &[Option<Change>],
     area: Rect,
     theme: &Theme,
     active: bool,
@@ -773,6 +791,21 @@ fn editor(
                 theme.line_number.as_ref().unwrap_or(&theme.muted)
             }),
         );
+        // Quick diff: the separator becomes a colored bar on lines that differ from
+        // Git, and a red marker where lines were removed.
+        if let Some(Some(change)) = changes.get(row) {
+            let glyph = match change {
+                Change::Added | Change::Modified => "▌",
+                Change::Deleted => "▁",
+                Change::DeletedAbove => "▔",
+            };
+            text(
+                frame,
+                Rect::new(area.x + digits as u16 + 1, y, 1, 1),
+                glyph,
+                change_color(*change, theme),
+            );
+        }
         let marks: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.row == row).collect();
         if let Some(worst) = marks.iter().map(|d| d.severity).min() {
             text(
@@ -1737,6 +1770,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             "Ctrl-Space / ]d [d / :format",
             "Complete (also after .) / next-prev problem / format",
+        ),
+        (
+            "]c / [c",
+            "Next / previous change from Git (gutter: ▌ new/changed, ▁ removed)",
         ),
         ("u / Ctrl-r / Ctrl-s", "Undo / redo / atomic save"),
         ("/query / n N", "Find / next / previous; wraps around"),

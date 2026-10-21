@@ -7,6 +7,7 @@ use crate::{
     layout::{Axis, Tile},
     lsp::{self, Lsp},
     markdown::{self, Previews},
+    quickdiff,
     session::{self, SavedBuffer, SavedPane, Session},
     terminal::{Launch, TerminalPane},
     textsize,
@@ -16,7 +17,7 @@ use anyhow::{bail, Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::mpsc::Receiver,
     time::{Duration, Instant},
@@ -266,6 +267,8 @@ pub struct App {
     text_size_repeat: Option<Instant>,
     /// `odin FILE` typed in a terminal pane arrives here.
     pub remote: Option<crate::remote::Server>,
+    /// Quick diff gutter marks, by buffer.
+    pub diffs: HashMap<usize, quickdiff::State>,
 }
 
 impl App {
@@ -332,6 +335,7 @@ impl App {
             text_size: None,
             text_size_repeat: None,
             remote: None,
+            diffs: HashMap::new(),
         };
         if let Some(path) = initial {
             app.open(&path)?;
@@ -397,6 +401,37 @@ impl App {
     }
     pub fn open(&mut self, path: &Path) -> Result<()> {
         self.open_file(path, false)
+    }
+    /// Keep the quick diff of every buffer on screen current; with `refetch`, ask Git
+    /// for the index versions again (something may have been staged or committed).
+    fn update_diffs(&mut self, refetch: bool) -> bool {
+        let shown: BTreeSet<usize> = self
+            .panes
+            .values()
+            .filter_map(|pane| match pane {
+                Pane::Editor(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let mut changed = false;
+        for id in shown {
+            let Some(buffer) = self.buffers.get(id) else {
+                continue;
+            };
+            let Some(path) = buffer.path.clone() else {
+                changed |= self.diffs.remove(&id).is_some();
+                continue;
+            };
+            let state = self.diffs.entry(id).or_default();
+            if state.path.as_ref() != Some(&path) {
+                *state = quickdiff::State::new(path);
+                state.refetch();
+            } else if refetch {
+                state.refetch();
+            }
+            changed |= state.update(buffer.revision, || buffer.text.to_string());
+        }
+        changed
     }
     /// `odin PATH` from one of Odin's terminals: open the file here instead of
     /// nesting another Odin; a folder of this project is shown in the explorer.
@@ -966,9 +1001,11 @@ impl App {
                 _ => {}
             }
         }
+        let mut git_changed = false;
         if let Some(receiver) = &self.git_receiver {
             match receiver.try_recv() {
                 Ok(info) => {
+                    git_changed = true;
                     self.git = info;
                     self.git_receiver = None;
                     self.redraw = true;
@@ -979,6 +1016,7 @@ impl App {
                 _ => {}
             }
         }
+        self.redraw |= self.update_diffs(git_changed);
         if self.git_receiver.is_none() && self.last_git.elapsed() >= Duration::from_secs(4) {
             self.git_receiver = Some(workspace::refresh_git(self.root.clone()));
             self.last_git = Instant::now();
@@ -1771,6 +1809,8 @@ impl App {
                 ('g', KeyCode::Char('d')) => return self.lsp_request(lsp::Kind::Definition),
                 (']', KeyCode::Char('d')) => self.next_diagnostic(false),
                 ('[', KeyCode::Char('d')) => self.next_diagnostic(true),
+                (']', KeyCode::Char('c')) => self.next_change(false),
+                ('[', KeyCode::Char('c')) => self.next_change(true),
                 ('d', KeyCode::Char('d')) => {
                     let line = b.delete_line();
                     self.clipboard.copy(line, true);
@@ -2045,6 +2085,34 @@ impl App {
                 b.clamp();
             }
             None => self.notice("No diagnostics in this file"),
+        }
+    }
+    /// `]c` / `[c`: the next / previous block of lines that differ from Git.
+    fn next_change(&mut self, backwards: bool) {
+        let Some(id) = self.buffer_id() else {
+            return;
+        };
+        let marks = self
+            .diffs
+            .get(&id)
+            .map(|d| d.marks.as_slice())
+            .unwrap_or_default();
+        let starts: Vec<usize> = (0..marks.len())
+            .filter(|&row| marks[row].is_some() && (row == 0 || marks[row - 1] != marks[row]))
+            .collect();
+        let b = &mut self.buffers[id];
+        let target = if backwards {
+            starts.iter().rev().find(|&&r| r < b.row).or(starts.last())
+        } else {
+            starts.iter().find(|&&r| r > b.row).or(starts.first())
+        };
+        match target {
+            Some(&row) => {
+                b.row = row;
+                b.col = 0;
+                b.clamp();
+            }
+            None => self.notice("No changes from Git in this file"),
         }
     }
     fn jump_back(&mut self) -> Result<()> {
@@ -3670,5 +3738,119 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
             app.remote_open(&root.join("blob.bin")),
             Reply::Failed(_)
         ));
+    }
+    #[test]
+    fn edited_lines_are_marked_until_staged() {
+        use crate::quickdiff::Change;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=Odin",
+                    "-c",
+                    "user.email=odin@example.com",
+                    "-C",
+                ])
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        let path = root.join("list.txt");
+        std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\n").unwrap();
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+        let mut app = App::new(root.clone(), Some(path.clone()), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let wait = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+            let start = Instant::now();
+            while !done(app) && start.elapsed() < Duration::from_secs(10) {
+                app.tick();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let marks = move |app: &App| {
+            app.diffs
+                .get(&id)
+                .map(|d| d.marks.clone())
+                .unwrap_or_default()
+        };
+        wait(&mut app, &|app| {
+            app.diffs.get(&id).is_some_and(|d| d.computed_base())
+        });
+        assert!(
+            marks(&app).iter().all(Option::is_none),
+            "a clean file has no marks"
+        );
+        // Unsaved edits: change "two", add a line after "three", remove "five".
+        let b = &mut app.buffers[id];
+        let at = |b: &Buffer, row: usize, col: usize| b.text.line_to_char(row) + col;
+        b.replace(at(b, 1, 0), at(b, 1, 3), "TWO");
+        b.replace(at(b, 3, 0), at(b, 3, 0), "new\n");
+        b.replace(at(b, 4, 4), at(b, 5, 4), "");
+        assert_eq!(b.text.to_string(), "one\nTWO\nthree\nnew\nfour\n");
+        app.tick();
+        assert_eq!(
+            marks(&app),
+            [
+                None,
+                Some(Change::Modified),
+                None,
+                Some(Change::Added),
+                Some(Change::Deleted),
+            ]
+        );
+        // The gutter shows them; ]c walks from change to change.
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let cell = |line: &str| {
+            let y = (0..buffer.area.height)
+                .find(|&y| {
+                    let row: String = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol().to_string())
+                        .collect();
+                    row.contains(line)
+                })
+                .unwrap();
+            let x = (0..buffer.area.width)
+                .find(|&x| ["▌", "▁"].contains(&buffer[(x, y)].symbol()))
+                .unwrap_or_else(|| panic!("no marker beside {line}"));
+            (buffer[(x, y)].symbol().to_string(), buffer[(x, y)].fg)
+        };
+        let theme = &app.theme;
+        assert_eq!(
+            cell("TWO"),
+            ("▌".into(), crate::ui::change_color(Change::Modified, theme))
+        );
+        assert_eq!(
+            cell("new"),
+            ("▌".into(), crate::ui::change_color(Change::Added, theme))
+        );
+        assert_eq!(
+            cell("four"),
+            ("▁".into(), crate::ui::change_color(Change::Deleted, theme))
+        );
+        app.buffers[id].row = 0;
+        app.sidebar_focus = false;
+        press(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(app.buffers[id].row, 1);
+        press(&mut app, KeyCode::Char(']'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        assert_eq!(app.buffers[id].row, 3);
+        // Saved and staged: Git's index matches, so the marks go away.
+        app.save(None).unwrap();
+        git(&["add", "list.txt"]);
+        app.update_diffs(true);
+        wait(&mut app, &|app| marks(app).iter().all(Option::is_none));
+        assert!(
+            marks(&app).iter().all(Option::is_none),
+            "staged changes are clean"
+        );
     }
 }

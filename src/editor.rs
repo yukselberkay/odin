@@ -9,7 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const MAX_FILE_SIZE: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_FILE_SIZE: u64 = 16 * 1024 * 1024;
 const UNDO_LIMIT: usize = 200;
 
 #[derive(Clone)]

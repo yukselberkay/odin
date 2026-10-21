@@ -279,6 +279,8 @@ the history graph appears after you make commits.
 - **Git sidebar:** current branch, changed/untracked files, and recent ASCII
   commit graph. Enter opens a changed file. Git is read-only here; perform
   staging/commits in the terminal or your preferred Git TUI.
+- **Changes in the gutter:** VS Code-style added / changed / removed line marks
+  against Git, live as you type, with `]c` / `[c` to jump between them.
 - **External-change refresh:** clean open files refresh when AI/shell tools edit
   them. Dirty buffers remain yours; saving detects conflicting disk changes.
 - **Extensions:** user-owned TOML themes and explicitly invoked command plugins.
@@ -437,6 +439,7 @@ to have it open on every start.
 | `v` / `V` | Select characters / whole lines (see [Copy and paste](#copy-and-paste)) |
 | `K` / `gd` / `Ctrl-o` | Hover docs / go to definition / jump back |
 | `]d` / `[d` | Next / previous diagnostic |
+| `]c` / `[c` | Next / previous [change from Git](#changes-in-the-gutter) |
 | `u` / `Ctrl-r` | Undo / redo |
 | `/text` then Enter | Search, wrapping through the file |
 | `n` / `N` | Next / previous search result |
@@ -446,6 +449,22 @@ to have it open on every start.
 Character movement is UTF-8-aware, not grapheme-cluster-aware. This is a documented
 Vim subset, not full Vim: block selection, arbitrary operators, macros and numeric
 counts for `dd` or `yy` are not implemented.
+
+### Changes in the gutter
+
+Like VS Code, the editor marks lines that differ from Git in the column between the
+line numbers and the text, updating as you type (unsaved edits count):
+
+| Mark | Color | Meaning |
+| --- | --- | --- |
+| `▌` | green | Added line |
+| `▌` | blue | Changed line |
+| `▁` | red | Lines removed below this line (`▔` above the first line) |
+
+The comparison is with the file's version in the Git index, as in VS Code and
+`git diff`: after `git add` or a commit, those marks go away. Untracked files and
+files outside Git have none. `]c` / `[c` jump to the next / previous change. Colors
+come from the theme's terminal palette (bright green, blue and red).
 
 ### Editor: insert mode
 

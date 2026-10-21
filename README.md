@@ -391,7 +391,21 @@ A terminal program can't scale its own text, so Odin asks the terminal window:
 
 ### Fonts
 
-The font belongs to the terminal window Odin runs in, so `:font` changes it there:
+Odin's font is **JetBrains Mono Nerd Font Mono at 14 pt** (`font` and `font_size` in
+`config.toml`). The font belongs to the terminal window, so how far Odin can apply
+it depends on the terminal:
+
+- **macOS Terminal:** while Odin runs, its tab switches to that font and size, and
+  gets its own font back when Odin exits. Your profile and other tabs don't change.
+  `Ctrl-b 0` returns to 14 pt.
+- **Other terminals** can't have one window's font changed from outside, so they
+  keep their own font. Make JetBrains Mono your terminal's font with
+  `:font family "JetBrainsMono Nerd Font Mono"` (below) or in its settings.
+- **Font not installed:** every terminal keeps its own font.
+  [`scripts/install.sh`](#install-script) installs it.
+
+Set `font = ""` to always keep the terminal's font. To change it in the terminal
+itself, `:font` edits the terminal's config:
 
 | Command | What it does |
 | --- | --- |

@@ -177,6 +177,8 @@ fn main() -> Result<()> {
             app.open(path)?;
         }
     }
+    // Odin's own font for this window while it runs; the terminal's comes back on exit.
+    let _font = textsize::WindowFont::apply(&app.config.font, app.config.font_size);
     // Restore the user's terminal even on panic; no shell or raw escape output survives.
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

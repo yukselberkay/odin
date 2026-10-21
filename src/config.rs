@@ -104,6 +104,9 @@ pub struct CommandPlugin {
     pub args: Vec<String>,
 }
 
+/// JetBrains Mono with Nerd Font icons, one cell wide.
+pub const DEFAULT_FONT: &str = "JetBrainsMono Nerd Font Mono";
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -122,6 +125,11 @@ pub struct Config {
     pub git_pane: bool,
     /// Save each project's panes, buffers and terminals to `.odin/` and reopen them.
     pub restore_session: bool,
+    /// Font for Odin's terminal window while Odin runs; `""` keeps the terminal's.
+    /// Applied in Terminal.app when installed (see `textsize::WindowFont`).
+    pub font: String,
+    /// Font size in points, with `font`.
+    pub font_size: f32,
     /// Where new AI panes open: "right" (side by side) or "below" (stacked).
     pub ai_split: String,
     /// Install the Odin skill (interactive docs) for AI agents when one is launched.
@@ -149,6 +157,8 @@ impl Default for Config {
             show_hidden: true,
             git_pane: false,
             restore_session: true,
+            font: DEFAULT_FONT.into(),
+            font_size: 14.0,
             ai_split: "right".into(),
             ai_skill: true,
             ai: BTreeMap::new(),
@@ -485,6 +495,17 @@ mod tests {
         assert!(icons("\"emoji\"").is_err());
     }
 
+    #[test]
+    fn font_defaults_to_jetbrains_mono_and_can_be_turned_off() {
+        let config = Config::default();
+        assert_eq!(config.font, "JetBrainsMono Nerd Font Mono");
+        assert_eq!(config.font_size, 14.0);
+        let config: Config = toml::from_str("font = \"\"\nfont_size = 13").unwrap();
+        assert!(config.font.is_empty());
+        assert_eq!(config.font_size, 13.0);
+        let example: Config = toml::from_str(include_str!("../config.example.toml")).unwrap();
+        assert_eq!(example.font, DEFAULT_FONT);
+    }
     #[test]
     fn config_rejects_unknown_fields() {
         assert!(toml::from_str::<Config>("silent_exec = 'bad'").is_err());

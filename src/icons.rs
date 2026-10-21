@@ -134,12 +134,62 @@ pub fn nerd_font_available() -> bool {
         || font_dirs().iter().any(|d| has_nerd_font(d, 3))
 }
 
+/// Whether a font family is installed: fontconfig's list where it exists (Linux),
+/// else font files whose names start with the family, ignoring spaces and case.
+pub(crate) fn font_installed(family: &str) -> bool {
+    let wanted = squash(family);
+    if wanted.is_empty() {
+        return false;
+    }
+    if !cfg!(target_os = "macos") {
+        let listed = std::process::Command::new("fc-list")
+            .args([":", "family"])
+            .stderr(std::process::Stdio::null())
+            .output();
+        if let Ok(output) = listed {
+            if output.status.success() {
+                return String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .flat_map(|line| line.split(','))
+                    .any(|name| squash(name) == wanted);
+            }
+        }
+    }
+    font_dirs().iter().any(|d| has_font_file(d, &wanted, 3))
+}
+
+/// `JetBrainsMono Nerd Font Mono` → `jetbrainsmononerdfontmono`.
+fn squash(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn has_font_file(dir: &Path, wanted: &str, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if path.is_dir() {
+            return depth > 0 && has_font_file(&path, wanted, depth - 1);
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        [".ttf", ".otf", ".ttc"]
+            .iter()
+            .any(|ext| name.ends_with(ext))
+            && squash(&name).starts_with(wanted)
+    })
+}
+
 fn font_dirs() -> Vec<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut dirs = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(home.map(|h| h.join("Library/Fonts")));
         dirs.push("/Library/Fonts".into());
+        dirs.push("/System/Library/Fonts".into());
     } else if cfg!(windows) {
         dirs.extend(
             std::env::var_os("LOCALAPPDATA")
@@ -179,6 +229,26 @@ fn has_nerd_font(dir: &Path, depth: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_fonts_are_found_by_family_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("JetBrainsMono");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(nested.join("JetBrainsMonoNerdFontMono-Regular.ttf"), "").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "").unwrap();
+        let wanted = squash("JetBrainsMono Nerd Font Mono");
+        assert_eq!(wanted, "jetbrainsmononerdfontmono");
+        assert!(has_font_file(dir.path(), &wanted, 2));
+        assert!(has_font_file(dir.path(), &squash("JetBrains Mono"), 2));
+        assert!(!has_font_file(dir.path(), &squash("Fira Code"), 2));
+        assert!(
+            !has_font_file(dir.path(), &squash("notes"), 2),
+            "only font files count"
+        );
+        assert!(!font_installed(""));
+        assert!(!font_installed("No Such Font Odin Test"));
+    }
 
     #[test]
     fn common_files_get_their_language_icon() {

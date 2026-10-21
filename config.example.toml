@@ -18,6 +18,12 @@ git_pane = false
 # Reopen each project as you left it: panes, unsaved text, terminal output, AI
 # conversations. Saved in <project>/.odin/ (Git repositories, or :session save).
 restore_session = true
+# Odin's font while it runs, put back when it exits. macOS Terminal switches Odin's
+# tab to it when it's installed; other terminals, or a missing font, keep the
+# terminal's own (set it there, or with :font family). "" always keeps it.
+# scripts/install.sh installs JetBrains Mono Nerd Font.
+font = "JetBrainsMono Nerd Font Mono"
+font_size = 14
 # Where AI panes open: "right" (side by side) or "below" (stacked).
 ai_split = "right"
 # Teach your AI agents about Odin (an Agent Skills skill, installed on first launch).

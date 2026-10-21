@@ -598,6 +598,20 @@ pub(crate) fn mark_color(mark: Mark, theme: &Theme) -> Color {
     }
 }
 
+/// The explorer's key hint: the longest wording that fits, never cut off.
+fn explorer_hint(width: usize) -> &'static str {
+    [
+        " ←→ fold  c/E all  r refresh",
+        " ←→ fold c/E all r refresh",
+        " ←→ fold  c/E all  r ↻",
+        " ←→ fold  r refresh",
+        " ←→ fold",
+    ]
+    .into_iter()
+    .find(|hint| hint.chars().count() <= width)
+    .unwrap_or("")
+}
+
 fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
     let git_height = (area.height / 3).clamp(8, 16).min(area.height / 2);
@@ -719,7 +733,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         text(
             frame,
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
-            " ←→ fold  c/E all  r refresh",
+            explorer_hint(inner.width as usize),
             color(&theme.muted),
         );
     }
@@ -1994,6 +2008,15 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explorer_hint_always_fits() {
+        for width in 0..40 {
+            assert!(super::explorer_hint(width).chars().count() <= width);
+        }
+        // The default sidebar (29 columns, 27 inside the border) keeps every word.
+        assert_eq!(super::explorer_hint(27), " ←→ fold c/E all r refresh");
+    }
+
     use super::*;
     #[test]
     fn terminal_palette_maps_ansi_but_preserves_extended_and_truecolor() {

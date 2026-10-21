@@ -44,7 +44,7 @@ in the order the user presses them. Prefer showing over explaining.
 | Open a file | **`Ctrl-p`** then a path (Tab completes), or `:e path`, or **`Ctrl-e`** to the explorer → ↑↓ previews, Enter opens. |
 | Save / quit | **`Ctrl-s`** or `:w` · `:wq` · `:q` closes a pane · **`Ctrl-q`** / `:qa` quits · `:qa!` discards changes. |
 | Split the screen | **`Ctrl-b %`** side by side, **`Ctrl-b "`** stacked; `Ctrl-b` + arrows moves focus, `Ctrl-b Ctrl-arrows` resizes, `Ctrl-b z` zooms, `Ctrl-b x` closes. |
-| Open a terminal | **`Ctrl-b c`** (or `:term`). Shell = `$SHELL` on Unix, PowerShell on Windows; set `shell = "…"`. Scroll back with `Ctrl-b PgUp/PgDn`. |
+| Open a terminal | **`Ctrl-b c`** below (or `:term`), **`Ctrl-b C`** beside (or `:term right`). Shell = `$SHELL` on Unix, PowerShell on Windows; set `shell = "…"`. Scroll back with `Ctrl-b PgUp/PgDn`. |
 | Change theme | **`Ctrl-b t`** or `:themes` → ↑↓ previews live, type to filter, Enter keeps (saved). `:theme name` directly. Add themes as `.toml` or VS Code `.json` in the themes folder; Omarchy themes appear as `omarchy-<name>`, and `omarchy` follows the desktop. |
 | Copy / paste | Select with **Shift+arrows** or `v` / `V`; **`Ctrl-c`** copy, **`Ctrl-x`** cut, **`Ctrl-v`** paste (system clipboard). Nothing selected → Ctrl-c/x take the whole line. From a terminal or AI pane: **`Ctrl-b [`** copy mode (move, `v`/`V` select, `y` copies, `/` `?` search scrollback), or **`Ctrl-b Z`** copy view (only that pane on screen, for mouse selection; again to return). Paste into a shell with the terminal's Ctrl-Shift-V / Cmd-V. |
 | Search | `/text` Enter, then `n` / `N`. |

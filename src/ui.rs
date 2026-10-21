@@ -1911,7 +1911,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ("Ctrl-b % / \"", "Split side-by-side / top-and-bottom"),
         ("Ctrl-b arrows / h j k l", "Focus adjacent pane; o cycles"),
         ("Ctrl-b Ctrl-arrows", "Resize a split"),
-        ("Ctrl-b c", "New shell"),
+        ("Ctrl-b c / C", "New shell below / beside; :term right"),
         (
             "Ctrl-b a / A",
             "AI launcher beside / below (ai_split sets default)",

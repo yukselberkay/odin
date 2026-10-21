@@ -1605,6 +1605,7 @@ impl App {
             KeyCode::Char('%') => self.split_editor(Axis::Horizontal)?,
             KeyCode::Char('"') => self.split_editor(Axis::Vertical)?,
             KeyCode::Char('c') => self.open_terminal(None, Some(Axis::Vertical))?,
+            KeyCode::Char('C') => self.open_terminal(None, Some(Axis::Horizontal))?,
             KeyCode::Char('a') => self.open_ai(Some(Axis::Horizontal))?,
             KeyCode::Char('A') => self.open_ai(Some(Axis::Vertical))?,
             KeyCode::Char('e') => self.toggle_explorer(),
@@ -1664,7 +1665,9 @@ impl App {
                 }
             }
             KeyCode::Esc => {}
-            _ => self.notice("Ctrl-b: % split · \" stack · c shell · a AI · arrows focus · ? help"),
+            _ => self.notice(
+                "Ctrl-b: % split · \" stack · c shell below · C beside · a AI · arrows focus · ? help",
+            ),
         }
         Ok(())
     }
@@ -2935,7 +2938,15 @@ impl App {
             },
             "vsplit" | "vs" => self.split_editor(Axis::Horizontal)?,
             "split" | "sp" => self.split_editor(Axis::Vertical)?,
-            "term" | "terminal" => self.open_terminal(None, Some(Axis::Vertical))?,
+            // :term [below|right]
+            "term" | "terminal" => {
+                let axis = match arg {
+                    "" | "below" | "stacked" | "down" => Axis::Vertical,
+                    "right" | "beside" | "side" => Axis::Horizontal,
+                    _ => bail!("Use :term, :term below or :term right"),
+                };
+                self.open_terminal(None, Some(axis))?
+            }
             "copymode" | "copy-mode" => self.enter_copy_mode(),
             "copyview" | "copy-view" => self.toggle_copy_view(),
             "collapse" => {
@@ -3591,6 +3602,42 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
                 }
             }
         }
+    }
+    #[test]
+    fn terminals_open_below_or_beside_the_active_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.config.shell = Some("sh".into());
+        let editor = app.focused;
+        let area = Rect::new(0, 0, 120, 40);
+        // Ctrl-b C: a shell to the right, full height.
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(app.panes.len(), 2);
+        let beside = app.focused;
+        assert!(matches!(app.panes.get(&beside), Some(Pane::Terminal(_))));
+        app.rectangles.clear();
+        app.tiles.rectangles(area, &mut app.rectangles);
+        let rect = |app: &App, id| app.rectangles.iter().find(|(i, _)| *i == id).unwrap().1;
+        assert!(rect(&app, beside).x > rect(&app, editor).x);
+        assert_eq!(rect(&app, beside).height, area.height);
+        // Ctrl-b c: a shell below the focused one, same column.
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
+        let below = app.focused;
+        app.rectangles.clear();
+        app.tiles.rectangles(area, &mut app.rectangles);
+        assert!(rect(&app, below).y > rect(&app, beside).y);
+        assert_eq!(rect(&app, below).x, rect(&app, beside).x);
+        // :term right does what Ctrl-b C does.
+        app.command("term right").unwrap();
+        let right = app.focused;
+        app.rectangles.clear();
+        app.tiles.rectangles(area, &mut app.rectangles);
+        assert!(rect(&app, right).x > rect(&app, below).x);
+        assert_eq!(rect(&app, right).y, rect(&app, below).y);
+        assert!(app.command("term sideways").is_err());
+        assert_eq!(app.panes.len(), 4);
     }
     #[test]
     fn missing_ai_binary_reports_error_without_losing_pane() {

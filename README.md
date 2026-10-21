@@ -245,6 +245,7 @@ panes; a **horizontal split** creates top/bottom panes.
 | Side-by-side editor panes | `Ctrl-b %` | `:vsplit` |
 | Stacked editor panes | `Ctrl-b "` | `:split` |
 | Shell below the active pane | `Ctrl-b c` | `:term` |
+| Shell beside the active pane | `Ctrl-b C` | `:term right` |
 
 Splits nest inside the focused pane. Splitting an editor initially shows the
 same buffer in both views; use `:e another-file` in the new view to open something
@@ -337,7 +338,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b arrows` or `Ctrl-b h/j/k/l` | Move between panes |
 | `Ctrl-b Ctrl-arrows` | Resize the closest split on that axis |
 | `Ctrl-b o` | Cycle panes |
-| `Ctrl-b c` | New terminal |
+| `Ctrl-b c` / `Ctrl-b C` | New terminal below / beside |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
 | `Ctrl-b z` / `x` | Maximize (zoom) / close current pane |
 | `Ctrl-b +` / `-` / `0` | [Text size](#text-size) bigger / smaller / reset; keep pressing `+` or `-` to repeat |

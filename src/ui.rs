@@ -197,9 +197,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let inner = if bare {
             rect
         } else {
-            let block = panel(title, &theme, active);
+            let block = panel(title.clone(), &theme, active);
             let inner = block.inner(rect);
             frame.render_widget(block, rect);
+            // Maximized (Ctrl-b z): say so, and that other panes are still running.
+            let hidden = app.panes.len().saturating_sub(1);
+            if app.zoom && hidden > 0 {
+                let badge = [
+                    format!(
+                        " ⛶ MAXIMIZED · {hidden} more {} · Ctrl-b z restores ",
+                        if hidden == 1 { "pane" } else { "panes" }
+                    ),
+                    format!(
+                        " ⛶ +{hidden} {} · Ctrl-b z ",
+                        if hidden == 1 { "pane" } else { "panes" }
+                    ),
+                    format!(" ⛶ +{hidden} "),
+                ];
+                let room = rect.width.saturating_sub(title.chars().count() as u16 + 4);
+                if let Some(badge) = badge.iter().find(|b| b.chars().count() as u16 <= room) {
+                    let width = badge.chars().count() as u16;
+                    frame.render_widget(
+                        Paragraph::new(badge.clone()).style(
+                            Style::default()
+                                .fg(color(&theme.background))
+                                .bg(color(&theme.accent))
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Rect::new(rect.right() - 2 - width, rect.y, width, 1),
+                    );
+                }
+            }
             inner
         };
         if inner.width < 2 || inner.height < 1 {

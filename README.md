@@ -344,7 +344,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b o` | Cycle panes |
 | `Ctrl-b c` / `Ctrl-b C` | New terminal below / beside |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
-| `Ctrl-b z` / `x` | Maximize (zoom) / close current pane |
+| `Ctrl-b z` / `x` | Maximize (zoom) / close current pane; a maximized pane shows `⛶ MAXIMIZED · N more panes` on its border |
 | `Ctrl-b +` / `-` / `0` | [Text size](#text-size) bigger / smaller / reset; keep pressing `+` or `-` to repeat |
 | `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
 | `Ctrl-b G` | Open the [Git pane](#git-pane); again focuses it, and when focused maximizes / restores it |

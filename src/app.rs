@@ -4281,6 +4281,34 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert!([top_left, top_right].contains(&go(below, KeyCode::Up)));
     }
     #[test]
+    fn a_maximized_pane_says_other_panes_are_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let zoom = |app: &mut App| {
+            press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(app, KeyCode::Char('z'), KeyModifiers::NONE);
+        };
+        zoom(&mut app);
+        assert!(
+            !screen(&mut app, 100, 20).join("\n").contains("MAXIMIZED"),
+            "nothing hidden"
+        );
+        zoom(&mut app);
+        app.split_editor(Axis::Horizontal).unwrap();
+        app.split_editor(Axis::Vertical).unwrap();
+        zoom(&mut app);
+        assert!(app.zoom);
+        let shown = screen(&mut app, 100, 20).join("\n");
+        assert!(
+            shown.contains("MAXIMIZED · 2 more panes · Ctrl-b z restores"),
+            "{shown}"
+        );
+        // Narrow: a shorter badge still fits on the border.
+        assert!(screen(&mut app, 50, 12).join("\n").contains("+2 panes"));
+        zoom(&mut app);
+        assert!(!screen(&mut app, 100, 20).join("\n").contains("MAXIMIZED"));
+    }
+    #[test]
     fn panes_move_swap_and_flip_after_they_are_made() {
         // Two panes on top (a, b), one full-width pane below (c).
         let dir = tempfile::tempdir().unwrap();

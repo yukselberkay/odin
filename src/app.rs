@@ -16,7 +16,9 @@ use crate::{
     workspace::{self, FileTree, GitInfo},
 };
 use anyhow::{bail, Context, Result};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -299,6 +301,11 @@ pub struct App {
     pub find: Option<Find>,
     /// The replace text and whole-word choice from the last find, for the next one.
     find_last: (String, bool),
+    /// Where the explorer's entries, the sidebar's Git section and the guide were
+    /// last drawn, for the mouse.
+    pub explorer_rows: Rect,
+    pub git_area: Rect,
+    pub help_area: Rect,
 }
 
 impl App {
@@ -370,6 +377,9 @@ impl App {
             copy: None,
             find: None,
             find_last: (String::new(), false),
+            explorer_rows: Rect::default(),
+            git_area: Rect::default(),
+            help_area: Rect::default(),
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -1208,6 +1218,7 @@ impl App {
         self.redraw = true;
         let result = match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key),
+            Event::Mouse(mouse) => self.mouse(mouse),
             Event::Paste(text) => {
                 if self.find.is_some() {
                     self.find_type(&text);
@@ -1234,6 +1245,134 @@ impl App {
         if self.mode != Mode::Insert {
             self.menu = None;
         }
+    }
+    /// Odin takes the mouse (config `mouse`), except in copy view, which is for
+    /// selecting text with it.
+    pub fn mouse_wanted(&self) -> bool {
+        self.config.mouse && self.copy_view.is_none()
+    }
+    /// The wheel scrolls what's under the pointer; a click focuses it, puts the
+    /// editor cursor there, or opens the explorer entry.
+    fn mouse(&mut self, mouse: MouseEvent) -> Result<()> {
+        let at = (mouse.column, mouse.row);
+        let inside = |r: Rect| at.0 >= r.x && at.0 < r.right() && at.1 >= r.y && at.1 < r.bottom();
+        let pane = self.rectangles.iter().copied().find(|(_, r)| inside(*r));
+        match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let up = mouse.kind == MouseEventKind::ScrollUp;
+                let step: isize = if up { -3 } else { 3 };
+                if self.help && inside(self.help_area) {
+                    self.help_scroll = self.help_scroll.saturating_add_signed(step);
+                } else if inside(self.explorer_rows) {
+                    self.tree.down(step);
+                } else if let Some((id, rect)) = pane {
+                    self.wheel(id, rect, up, at)?;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.input.is_some() || self.picker.is_some() || self.copy.is_some() {
+                    return Ok(());
+                }
+                self.close_find();
+                if inside(self.explorer_rows) {
+                    let index = self.tree.offset + usize::from(at.1 - self.explorer_rows.y);
+                    if index < self.tree.entries.len() {
+                        self.tree.selected = index;
+                        self.sidebar_focus = true;
+                        self.git_focus = false;
+                        return self.sidebar_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    }
+                } else if inside(self.git_area) {
+                    self.sidebar_visible = true;
+                    self.sidebar_focus = true;
+                    self.git_focus = true;
+                } else if let Some((id, rect)) = pane {
+                    if matches!(self.mode, Mode::Visual | Mode::VisualLine) {
+                        self.end_visual();
+                    }
+                    self.focused = id;
+                    self.sidebar_focus = false;
+                    self.click_editor(id, rect, at);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    /// The wheel over pane `id` (drawn at `rect`, border included).
+    fn wheel(&mut self, id: usize, rect: Rect, up: bool, at: (u16, u16)) -> Result<()> {
+        let step: isize = if up { -3 } else { 3 };
+        let inner = Rect::new(
+            rect.x + 1,
+            rect.y + 1,
+            rect.width.saturating_sub(2),
+            rect.height.saturating_sub(2),
+        );
+        match self.panes.get_mut(&id) {
+            Some(Pane::Terminal(t)) => {
+                let column =
+                    at.0.saturating_sub(inner.x)
+                        .min(inner.width.saturating_sub(1));
+                let row =
+                    at.1.saturating_sub(inner.y)
+                        .min(inner.height.saturating_sub(1));
+                t.wheel(up, column, row)?;
+            }
+            Some(Pane::Editor(buffer)) => {
+                // Like Ctrl-e / Ctrl-y in Vim: the view moves, the cursor stays on
+                // screen.
+                let b = &mut self.buffers[*buffer];
+                let height = (inner.height - u16::from(inner.height > 3)).max(1) as usize;
+                let last = b.lines().saturating_sub(1);
+                b.scroll = b.scroll.saturating_add_signed(step).min(last);
+                b.row = b.row.clamp(b.scroll, (b.scroll + height - 1).min(last));
+                b.clamp();
+            }
+            Some(Pane::Preview(p)) => p.scroll = p.scroll.saturating_add_signed(step),
+            Some(Pane::Git(view)) => match view.diff.as_mut() {
+                Some(diff) => diff.scroll_by(step),
+                None => view.step(step),
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+    /// A click in an editor pane puts the cursor on that character.
+    fn click_editor(&mut self, id: usize, rect: Rect, at: (u16, u16)) {
+        let Some(Pane::Editor(buffer)) = self.panes.get(&id) else {
+            return;
+        };
+        let tab = self.config.tab_width.max(1);
+        let b = &mut self.buffers[*buffer];
+        let gutter = b.lines().to_string().len().max(3) as u16 + 2;
+        let (left, top) = (rect.x + 1 + gutter, rect.y + 1);
+        if at.0 < left || at.1 < top {
+            return;
+        }
+        let row = b.scroll + usize::from(at.1 - top);
+        if row >= b.lines() {
+            return;
+        }
+        // Screen column to character, with tabs as wide as they are drawn.
+        let target = b.hscroll + usize::from(at.0 - left);
+        let mut x = 0;
+        let mut col = 0;
+        for c in b.line(row).chars() {
+            let width = if c == '\t' {
+                tab - x % tab
+            } else {
+                unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)
+            };
+            if x + width > target {
+                break;
+            }
+            x += width;
+            col += 1;
+        }
+        b.end_group();
+        b.row = row;
+        b.col = col;
+        b.clamp();
     }
     fn input_start(&mut self, kind: InputKind) {
         self.input = Some(Input {
@@ -4968,6 +5107,130 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
             start.elapsed() >= Duration::from_secs(4),
             "not before it went quiet"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mouse_wheel_scrolls_and_clicks_focus_what_is_under_the_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.txt");
+        let text: String = (1..=100).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(&path, format!("\tx = 1\n{text}")).unwrap();
+        std::fs::write(dir.path().join("other.txt"), "other\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let editor = app.focused;
+        let mouse = |app: &mut App, kind, column, row| {
+            app.event(Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }));
+        };
+        let script = "seq 1 200; echo done; exec cat".to_string();
+        app.open_terminal(
+            Some(("/bin/sh", vec!["-c".into(), script])),
+            Some(Axis::Horizontal),
+        )
+        .unwrap();
+        let shell = app.focused;
+        for _ in 0..300 {
+            app.tick();
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            if t.transcript().contains("done") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        screen(&mut app, 120, 30);
+        let rect = |app: &App, id| app.rectangles.iter().find(|(i, _)| *i == id).unwrap().1;
+        let (e, t) = (rect(&app, editor), rect(&app, shell));
+        // The wheel over the editor scrolls it, though the shell has focus; the
+        // cursor stays on screen.
+        mouse(&mut app, MouseEventKind::ScrollDown, e.x + 10, e.y + 5);
+        mouse(&mut app, MouseEventKind::ScrollDown, e.x + 10, e.y + 5);
+        assert_eq!(app.buffers[id].scroll, 6);
+        assert_eq!(app.buffers[id].row, 6);
+        assert_eq!(app.focused, shell, "the wheel doesn't move focus");
+        mouse(&mut app, MouseEventKind::ScrollUp, e.x + 10, e.y + 5);
+        assert_eq!(app.buffers[id].scroll, 3);
+        // Over the shell: its history, three lines at a time.
+        let back = |app: &App| {
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            t.parser.lock().unwrap().screen().scrollback()
+        };
+        mouse(&mut app, MouseEventKind::ScrollUp, t.x + 5, t.y + 5);
+        assert_eq!(back(&app), 3);
+        mouse(&mut app, MouseEventKind::ScrollDown, t.x + 5, t.y + 5);
+        assert_eq!(back(&app), 0);
+        // A program that tracks the mouse gets the wheel (and PgUp) itself.
+        if let Some(Pane::Terminal(t)) = app.panes.get_mut(&shell) {
+            t.parser.lock().unwrap().process(b"\x1b[?1000h\x1b[?1006h");
+        }
+        mouse(&mut app, MouseEventKind::ScrollUp, t.x + 5, t.y + 3);
+        press(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(back(&app), 0, "nothing scrolled on Odin's side");
+        let mut echoed = false;
+        for _ in 0..200 {
+            app.tick();
+            let Some(Pane::Terminal(term)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            if term.transcript().contains("[<64;5;3M") {
+                echoed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            echoed,
+            "the program received the wheel at its own row and column"
+        );
+        // A click focuses the editor and puts the cursor on the character (the
+        // tab on line 1 is drawn four columns wide).
+        app.buffers[id].scroll = 0;
+        screen(&mut app, 120, 30);
+        let gutter = 5;
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            e.x + 1 + gutter + 4,
+            e.y + 1,
+        );
+        assert_eq!(app.focused, editor);
+        assert_eq!(
+            (app.buffers[id].row, app.buffers[id].col),
+            (0, 1),
+            "on the x"
+        );
+        // A click on an explorer entry opens it.
+        let rows = app.explorer_rows;
+        let other = app
+            .tree
+            .entries
+            .iter()
+            .position(|e| e.path.ends_with("other.txt"))
+            .unwrap();
+        let y = rows.y + (other - app.tree.offset) as u16;
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            rows.x + 3,
+            y,
+        );
+        assert!(app.buffers[app.buffer_id().unwrap()]
+            .name()
+            .contains("other.txt"));
+        // Copy view hands the mouse back to the terminal for selecting text.
+        assert!(app.mouse_wanted());
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
+        assert!(!app.mouse_wanted());
     }
 
     #[cfg(unix)]

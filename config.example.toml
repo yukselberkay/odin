@@ -34,6 +34,11 @@ ai_skill = true
 # (the terminal's bell), a macOS sound name ("Hero", "Ping"…) or a sound file.
 # :sound plays it.
 ai_sound = "default"
+# Mouse wheel scrolls the pane (or explorer, guide) under the pointer; a click
+# focuses a pane, puts the editor cursor there, or opens an explorer entry. While
+# Odin has the mouse, select text in copy view (Ctrl-b Z gives the mouse back), or
+# hold your terminal's bypass key (Option in iTerm2, Shift in most Linux terminals).
+mouse = true
 # shell = "/bin/zsh"
 
 # Language servers start automatically for Rust, Go, Python, C and C++ files.

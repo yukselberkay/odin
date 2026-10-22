@@ -137,6 +137,9 @@ pub struct Config {
     /// Sound when an AI pane finishes a prompt: "default", "off", "bell", a macOS
     /// sound name ("Glass", "Hero"…) or a sound file (see `sound::play`).
     pub ai_sound: String,
+    /// Mouse wheel scrolls what's under the pointer and a click focuses it. Odin then
+    /// owns the mouse: copy view (Ctrl-b Z) gives it back for selecting text.
+    pub mouse: bool,
     /// Your own AI launchers: `[ai.<name>] program = "…" args = […] env = {…}`.
     /// `[ai.local]` is used by the launcher's "Local LLM" entry.
     pub ai: BTreeMap<String, crate::local_ai::Launcher>,
@@ -168,6 +171,7 @@ impl Default for Config {
             ai_split: "right".into(),
             ai_skill: true,
             ai_sound: "default".into(),
+            mouse: true,
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),
             lsp_enabled: true,

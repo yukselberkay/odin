@@ -59,9 +59,13 @@ fn set_terminal_colors(theme: &config::Theme) -> io::Result<()> {
 /// Hand the terminal back its profile colors (OSC 111/110).
 fn reset_terminal_colors() {
     let mut out = io::stdout();
-    let _ = write!(out, "\x1b]111\x07\x1b]110\x07");
+    let _ = write!(out, "\x1b]111\x07\x1b]110\x07{MOUSE_OFF}");
     let _ = out.flush();
 }
+
+/// Mouse clicks and the wheel, reported in SGR form; no motion events.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1000l";
 
 struct TerminalGuard;
 impl Drop for TerminalGuard {
@@ -216,6 +220,7 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     let mut applied_colors = None;
+    let mut mouse = false;
     while app.running {
         app.tick();
         // Follow runtime theme switches (`:theme NAME`).
@@ -223,6 +228,14 @@ fn main() -> Result<()> {
         if applied_colors.as_ref() != Some(&colors) {
             set_terminal_colors(&app.theme)?;
             applied_colors = Some(colors);
+        }
+        // The mouse is Odin's (wheel, clicks) except in copy view, where the
+        // terminal's own selection needs it.
+        if app.mouse_wanted() != mouse {
+            mouse = !mouse;
+            let mut out = io::stdout();
+            write!(out, "{}", if mouse { MOUSE_ON } else { MOUSE_OFF })?;
+            out.flush()?;
         }
         if app.redraw {
             app.redraw = false;

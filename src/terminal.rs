@@ -282,17 +282,63 @@ impl TerminalPane {
             .unwrap_or(false);
         self.send(&encode_key(key, app))
     }
+    /// The mouse wheel at (`column`, `row`) inside the pane. Programs that track the
+    /// mouse (Claude Code's full-screen mode, htop) get the wheel itself; other
+    /// full-screen programs (less, vim) get arrow keys, as terminals do; anything
+    /// else scrolls the pane's history three lines.
+    pub fn wheel(&mut self, up: bool, column: u16, row: u16) -> Result<()> {
+        let (mode, encoding, alternate, application) = {
+            let Ok(parser) = self.parser.lock() else {
+                return Ok(());
+            };
+            let screen = parser.screen();
+            (
+                screen.mouse_protocol_mode(),
+                screen.mouse_protocol_encoding(),
+                screen.alternate_screen(),
+                screen.application_cursor(),
+            )
+        };
+        if mode != vt100::MouseProtocolMode::None {
+            let button: u16 = if up { 64 } else { 65 };
+            let (x, y) = (column + 1, row + 1);
+            let bytes = match encoding {
+                vt100::MouseProtocolEncoding::Sgr => {
+                    format!("\x1b[<{button};{x};{y}M").into_bytes()
+                }
+                _ => {
+                    let byte = |v: u16| (32 + v.min(223)) as u8;
+                    vec![0x1b, b'[', b'M', byte(button), byte(x), byte(y)]
+                }
+            };
+            return self.send(&bytes);
+        }
+        if alternate {
+            let arrow = KeyEvent::new(
+                if up { KeyCode::Up } else { KeyCode::Down },
+                KeyModifiers::NONE,
+            );
+            let bytes = encode_key(arrow, application);
+            return self.send(&bytes.repeat(3));
+        }
+        if let Ok(mut parser) = self.parser.lock() {
+            let back = parser.screen().scrollback();
+            parser.set_scrollback(if up { back + 3 } else { back.saturating_sub(3) });
+        }
+        Ok(())
+    }
     /// Scroll the pane's history the way a terminal window does: PgUp/PgDn (Fn-↑/↓
     /// on a Mac) move half a page; once scrolled back, ↑/↓ move a line, Home/End go
     /// to the top/bottom and Esc returns. Programs that draw their own full screen
-    /// (vim, less) keep these keys. False when the key belongs to the program; any
-    /// other key returns to the bottom on its way there ([`key`](Self::key)).
+    /// (vim, less) or track the mouse (Claude Code's full-screen mode) keep these
+    /// keys. False when the key belongs to the program; any other key returns to
+    /// the bottom on its way there ([`key`](Self::key)).
     pub fn scroll_key(&mut self, key: KeyEvent) -> bool {
         let Ok(mut parser) = self.parser.lock() else {
             return false;
         };
         let screen = parser.screen();
-        if screen.alternate_screen() || !(key.modifiers - KeyModifiers::SHIFT).is_empty() {
+        if owns_scrolling(screen) || !(key.modifiers - KeyModifiers::SHIFT).is_empty() {
             return false;
         }
         let back = screen.scrollback();
@@ -386,6 +432,12 @@ impl TerminalPane {
 }
 
 const SCROLLBACK: usize = 2_000;
+
+/// Programs that draw their own full screen (vim, less) or track the mouse
+/// (Claude Code's full-screen mode) scroll themselves: PgUp/PgDn go to them.
+fn owns_scrolling(screen: &vt100::Screen) -> bool {
+    screen.alternate_screen() || screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None
+}
 
 /// Resize `parser` without losing text. vt100's own `set_size` cuts rows to the new
 /// width and drops rows that no longer fit, so shrinking a pane (zoom, split) and

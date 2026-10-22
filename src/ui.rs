@@ -107,6 +107,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         );
     }
     let body = if bare { area } else { layout[1] };
+    app.explorer_rows = Rect::default();
+    app.git_area = Rect::default();
+    app.help_area = Rect::default();
     // On narrower screens the open guide takes the sidebar's room.
     let sidebar_shown =
         !bare && app.sidebar_visible && area.width >= 70 && !(app.help && area.width < 140);
@@ -136,6 +139,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         };
         let guide = Rect::new(content.right() - width, content.y, width, content.height);
         help(frame, app, guide);
+        app.help_area = guide;
         Rect::new(content.x, content.y, content.width - width, content.height)
     } else {
         content
@@ -675,6 +679,8 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         color(&theme.accent),
     );
     let visible = inner.height.saturating_sub(3) as usize;
+    app.explorer_rows = Rect::new(inner.x, inner.y + 1, inner.width, visible as u16);
+    app.git_area = regions[1];
     if app.tree.selected < app.tree.offset {
         app.tree.offset = app.tree.selected;
     }
@@ -2092,6 +2098,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             "Ctrl-b Z",
             "Copy view: only this pane's text, for mouse selection",
+        ),
+        (
+            "Mouse wheel / click",
+            "Scroll what's under the pointer / focus, place cursor, open",
         ),
         ("Ctrl-b g", "Focus the Git sidebar"),
         (

@@ -630,6 +630,20 @@ A Shift-selection made while typing behaves like any text field: typing replaces
 and a plain arrow cancels it. Your terminal's own paste (often `Ctrl-Shift-V`)
 also works in any mode and inserts at the cursor.
 
+### Mouse
+
+The wheel scrolls whatever is under the pointer, focused or not: an editor (the
+cursor stays on screen), a terminal's history, the Git pane, the Markdown preview,
+the explorer or the guide. Programs that handle the mouse themselves get the wheel:
+Claude Code's full-screen mode, htop; other full-screen programs like `less` get
+arrow keys, as in a normal terminal. A click focuses a pane, puts the editor cursor
+on the character you clicked, or opens an explorer entry.
+
+While Odin has the mouse, your terminal's click-and-drag selection is off: use copy
+view (`Ctrl-b Z`), which gives the mouse back, or your terminal's bypass key (Option
+in iTerm2, Shift in most Linux terminals). `mouse = false` in config.toml leaves the
+mouse to the terminal entirely.
+
 ### Copying from terminal and AI panes
 
 Your terminal's mouse selection copies whole screen rows, so in a split layout it
@@ -655,9 +669,10 @@ pane keeps running underneath; leaving shows its live output again. `Ctrl-b` and
 `Ctrl-q` still work and leave copy mode first.
 
 **Copy view (`Ctrl-b Z`, or `:copyview`)** shows only the focused pane, edge to edge:
-no sidebar, header, status lines, borders, line numbers or change marks. Select
-with the mouse as usual, then `Ctrl-b Z` again to return. Keys keep working in the
-pane, so you can scroll a terminal with `Ctrl-b PageUp` while in it. A reminder
+no sidebar, header, status lines, borders, line numbers or change marks, and Odin
+lets go of the mouse. Select with the mouse as usual, then `Ctrl-b Z` again to
+return. Keys keep working in the pane, so you can scroll a terminal with PageUp
+while in it. A reminder
 shows for the first two seconds only, so it can't end up in a copy.
 
 In editors, select with `v` / `V` and copy with `y` instead: that copies the exact
@@ -1063,6 +1078,7 @@ theme immediately. The configuration supports:
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
+| `mouse` | `true` | Wheel scrolls the pane under the pointer, a click focuses it ([Mouse](#mouse)); `false` leaves the mouse to the terminal |
 | `ai_sound` | `"default"` | Sound when an AI pane finishes a prompt: `"default"`, `"off"`, `"bell"`, a macOS sound name (`"Hero"`) or a sound file; `:sound` plays it |
 | `format_on_save` | `["go"]` | Languages whose files get imports organized and formatting from their server on save ([Go: tidy on save](#go-tidy-on-save)) |
 | `ai_skill` | `true` | Keep the [Odin skill](#ask-your-ai-agent-about-odin) installed for the AI agents on this machine (at startup and when you launch one) |
@@ -1123,7 +1139,7 @@ Odin does not provide automatic crash recovery or persistent pane layouts in v0.
   as host escape commands (no host OSC-52 clipboard execution).
 
 **v0.1 intentionally omits:** LSP rename/references/code actions, debugger, block selection,
-full Vim emulation, persistent sessions, mouse-driven editing, remote collaboration,
+full Vim emulation, mouse selection and drag in the editor, remote collaboration,
 and a marketplace. UTF-8 character movement is not grapheme-cluster editing.
 The terminal implements a practical VT100/xterm subset, not every Kitty/sixel/
 graphics protocol. Standard Codex/Claude CLI operation still depends on the installed

@@ -1384,6 +1384,32 @@ impl App {
             self.open_find(key.code == KeyCode::Char('h'));
             return Ok(());
         }
+        if self.buffer_id().is_some() {
+            if let Some((back, select)) = word_key(key) {
+                return self.jump(select, |b| if back { b.word(true) } else { b.word_end() });
+            }
+            // Cmd+arrows, from terminals that pass Cmd on (kitty, WezTerm, Ghostty):
+            // line start / end, top / bottom, as in a Mac text field.
+            if key.modifiers.contains(KeyModifiers::SUPER) {
+                let select = key.modifiers.contains(KeyModifiers::SHIFT);
+                match key.code {
+                    KeyCode::Left => return self.jump(select, Buffer::home),
+                    KeyCode::Right => return self.jump(select, Buffer::end),
+                    KeyCode::Up => return self.jump(select, |b| b.set_index(0)),
+                    KeyCode::Down => return self.jump(select, |b| b.set_index(b.text.len_chars())),
+                    _ => {}
+                }
+            }
+            if key.code == KeyCode::Backspace
+                && key.modifiers.contains(KeyModifiers::ALT)
+                && self.mode == Mode::Insert
+            {
+                if let Some(b) = self.active_buffer() {
+                    b.delete_word_back();
+                }
+                return Ok(());
+            }
+        }
         if matches!(self.mode, Mode::Visual | Mode::VisualLine) {
             return self.visual_key(key);
         }
@@ -1563,6 +1589,21 @@ impl App {
                 self.find_type(&c.to_string());
             }
             _ => {}
+        }
+        Ok(())
+    }
+    /// Move the cursor with `motion` in any mode, selecting with Shift (Option+←/→,
+    /// Cmd+arrows); without Shift it ends a Shift-selection, like the arrows do.
+    fn jump(&mut self, select: bool, motion: impl FnOnce(&mut Buffer)) -> Result<()> {
+        let selecting = matches!(self.mode, Mode::Visual | Mode::VisualLine);
+        if select && !selecting {
+            self.start_visual(Mode::Visual);
+        } else if !select && selecting && self.visual_from == Mode::Insert {
+            self.end_visual();
+        }
+        if let Some(b) = self.active_buffer() {
+            b.end_group();
+            motion(b);
         }
         Ok(())
     }
@@ -3423,6 +3464,30 @@ fn word_at(b: &Buffer) -> Option<(String, usize)> {
     Some((text, b.text.line_to_char(b.row) + start))
 }
 
+/// Word-wise arrows: Option+←/→ on a Mac (Terminal.app and Ghostty send them as
+/// Esc b / Esc f, which arrive as Alt+b / Alt+f), Alt+←/→, and Ctrl+←/→ on Linux
+/// and Windows. Returns (backwards, extend the selection).
+fn word_key(key: KeyEvent) -> Option<(bool, bool)> {
+    let m = key.modifiers;
+    let shift = m.contains(KeyModifiers::SHIFT);
+    match key.code {
+        KeyCode::Left | KeyCode::Right
+            if m.intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+        {
+            Some((key.code == KeyCode::Left, shift))
+        }
+        KeyCode::Char(c @ ('b' | 'f' | 'B' | 'F'))
+            if m.contains(KeyModifiers::ALT) && !m.contains(KeyModifiers::CONTROL) =>
+        {
+            Some((
+                c.eq_ignore_ascii_case(&'b'),
+                shift || c.is_ascii_uppercase(),
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// Keys that move the cursor in every mode (and extend a selection with Shift).
 fn is_motion(code: KeyCode) -> bool {
     matches!(
@@ -3474,6 +3539,56 @@ mod tests {
         press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
         assert_eq!(app.active_buffer().unwrap().row, 1);
         assert!(app.quit(false).is_ok());
+    }
+    #[test]
+    fn option_and_cmd_arrows_move_by_word_and_line_like_a_mac() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.js");
+        std::fs::write(&path, "let count = value;\nnext line\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let col = |app: &App| (app.buffers[id].row, app.buffers[id].col);
+        let alt = KeyModifiers::ALT;
+        press(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
+        // Terminal.app sends Option+→ / ← as Esc f / Esc b: Alt+f / Alt+b.
+        press(&mut app, KeyCode::Char('f'), alt);
+        assert_eq!(col(&app), (0, 3), "end of let");
+        press(&mut app, KeyCode::Right, alt);
+        assert_eq!(col(&app), (0, 9), "end of count");
+        press(&mut app, KeyCode::Char('b'), alt);
+        assert_eq!(col(&app), (0, 4));
+        assert_eq!(app.mode, Mode::Insert, "nothing typed");
+        // Shift+Option selects a word; typing replaces it.
+        press(&mut app, KeyCode::Right, alt | KeyModifiers::SHIFT);
+        assert_eq!(app.selection(), Some((4, 9)));
+        press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
+        assert!(app.buffers[id]
+            .text
+            .to_string()
+            .starts_with("let n = value;"));
+        // Option+Backspace deletes the word before the cursor.
+        press(&mut app, KeyCode::End, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Backspace, alt);
+        assert!(app.buffers[id]
+            .text
+            .to_string()
+            .starts_with("let n = value\n"));
+        press(&mut app, KeyCode::Backspace, alt);
+        assert!(app.buffers[id].text.to_string().starts_with("let n = \n"));
+        // Cmd+arrows, where the terminal passes Cmd on.
+        let cmd = KeyModifiers::SUPER;
+        press(&mut app, KeyCode::Left, cmd);
+        assert_eq!(col(&app), (0, 0));
+        press(&mut app, KeyCode::Right, cmd | KeyModifiers::SHIFT);
+        assert_eq!(app.selection(), Some((0, 8)));
+        press(&mut app, KeyCode::Down, cmd);
+        assert_eq!(app.mode, Mode::Insert, "a plain one ends the selection");
+        assert_eq!(col(&app), (2, 0));
+        press(&mut app, KeyCode::Up, cmd);
+        assert_eq!(col(&app), (0, 0));
+        // Ctrl+arrows (Linux, Windows) move by word too.
+        press(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+        assert_eq!(col(&app), (0, 3));
     }
     #[test]
     fn find_and_replace_like_vscode() {

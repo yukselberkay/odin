@@ -85,7 +85,7 @@ fn main() -> Result<()> {
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "-h" | "--help" => {
-                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --nested   Inside an Odin terminal, start a separate Odin instead of opening FILE there\n  --install-skill  Teach your AI agents about Odin (Agent Skills; also automatic)\n  --remove-skill   Remove that skill again\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
+                println!("Odin — all systems in view\n\nUsage: odin [FILE|DIRECTORY] [--demo] [--fresh]\n\n  --demo     Open an editor, AI launcher and shell\n  --fresh    Start without reopening the project's last session\n  --nested   Inside an Odin terminal, start a separate Odin instead of opening FILE there\n  --install-skill  Teach your AI agents about Odin (Agent Skills; also automatic)\n  --remove-skill   Remove that skill again\n  --keys     Show the keys your terminal sends to Odin (to check shortcuts)\n  --version  Print version\n\nKeys: F1 help · Ctrl-e files · Ctrl-b panes · Ctrl-s save · Ctrl-q quit\nConfig: {}",config::config_dir().display());
                 return Ok(());
             }
             "-V" | "--version" => {
@@ -107,6 +107,7 @@ fn main() -> Result<()> {
                 println!("Removed the Odin skill from {} place(s)", skill::remove()?);
                 return Ok(());
             }
+            "--keys" => return show_keys(),
             "--fresh" => fresh = true,
             "--nested" => nested = true,
             _ if arg.starts_with('-') => bail!("Unknown option: {arg}"),
@@ -232,4 +233,50 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `odin --keys`: print every key as Odin receives it. A combination that prints
+/// nothing is kept by the terminal (or the OS) and never reaches Odin.
+fn show_keys() -> Result<()> {
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    println!("Press keys to see what reaches Odin; Ctrl-c twice to stop.");
+    enable_raw_mode()?;
+    let mut last_ctrl_c = false;
+    let result = (|| -> Result<()> {
+        loop {
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            let mut name = String::new();
+            for (flag, label) in [
+                (KeyModifiers::CONTROL, "Ctrl+"),
+                (KeyModifiers::ALT, "Alt/Option+"),
+                (KeyModifiers::SUPER, "Cmd+"),
+                (KeyModifiers::SHIFT, "Shift+"),
+            ] {
+                if key.modifiers.contains(flag) {
+                    name.push_str(label);
+                }
+            }
+            name.push_str(&match key.code {
+                KeyCode::Char(' ') => "Space".to_string(),
+                KeyCode::Char(c) => c.to_string(),
+                KeyCode::F(n) => format!("F{n}"),
+                code => format!("{code:?}"),
+            });
+            print!("{name}\r\n");
+            io::Write::flush(&mut io::stdout())?;
+            let ctrl_c =
+                key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+            if ctrl_c && last_ctrl_c {
+                return Ok(());
+            }
+            last_ctrl_c = ctrl_c;
+        }
+    })();
+    disable_raw_mode()?;
+    result
 }

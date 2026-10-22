@@ -590,6 +590,23 @@ Escape returns to normal mode. `Ctrl-s` saves without leaving insert mode.
 Up/Down or `Ctrl-n`/`Ctrl-p` choose, Tab or Enter accepts, Escape closes the list,
 and typing keeps filtering it.
 
+Mac-style moves work in insert and normal mode, as far as your terminal passes the
+keys on (`odin --keys` shows what arrives; a key that prints nothing never reaches
+Odin):
+
+| Keys | Action |
+| --- | --- |
+| Option+← / → (Alt; Ctrl on Linux and Windows) | Previous word / end of word |
+| Shift+Option+← / → | Select by word |
+| Option+Backspace | Delete the word before the cursor |
+| Cmd+← / → / ↑ / ↓ (with Shift: select) | Line start / end, top / bottom of the file |
+| Fn+Shift+← / → in macOS Terminal | Line start / end (Terminal sends Home / End) |
+
+macOS Terminal keeps Cmd+arrows for itself, so use Fn+Shift+←/→ there, or a terminal
+that passes Cmd on (kitty, WezTerm, Ghostty). If a combination prints nothing in
+`odin --keys`, macOS Terminal can be taught to send it in Settings → Profiles →
+Keyboard; for example Shift+Option+← / → as `\033[1;4D` / `\033[1;4C`.
+
 ### Copy and paste
 
 One clipboard, shared with the rest of your desktop: everything you copy in Odin can

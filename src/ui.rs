@@ -2113,6 +2113,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Select characters / lines; y copy, d cut, p replace",
         ),
         (
+            "Option-←/→ · Option-⌫ · Cmd-arrows",
+            "Word left/right (⇧ selects) · delete word · line/file ends",
+        ),
+        (
             "Ctrl-c / Ctrl-x / Ctrl-v",
             "Copy / cut / paste (line if nothing selected)",
         ),

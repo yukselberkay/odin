@@ -398,15 +398,6 @@ impl Buffer {
         }
     }
     pub fn word(&mut self, backwards: bool) {
-        fn kind(c: char) -> u8 {
-            if c.is_whitespace() {
-                0
-            } else if c.is_alphanumeric() || c == '_' {
-                1
-            } else {
-                2
-            }
-        }
         let len = self.text.len_chars();
         let mut i = self.index();
         if backwards {
@@ -430,6 +421,30 @@ impl Buffer {
             }
         }
         self.set_index(i);
+    }
+    /// To the end of this or the next word, like Option+→ in a Mac text field.
+    pub fn word_end(&mut self) {
+        let len = self.text.len_chars();
+        let mut i = self.index();
+        while i < len && kind(self.text.char(i)) == 0 {
+            i += 1;
+        }
+        if i < len {
+            let k = kind(self.text.char(i));
+            while i < len && kind(self.text.char(i)) == k {
+                i += 1;
+            }
+        }
+        self.set_index(i);
+    }
+    /// Delete back to the start of the word, like Option+Backspace.
+    pub fn delete_word_back(&mut self) {
+        let end = self.index();
+        self.word(true);
+        let start = self.index();
+        if start < end {
+            self.replace(start, end, "");
+        }
     }
     /// Char ranges of every match of the search, in order.
     pub fn search_ranges(&self) -> Vec<(usize, usize)> {
@@ -581,6 +596,17 @@ impl Buffer {
         self.dirty = false;
         self.end_group();
         Ok(())
+    }
+}
+
+/// Word motions see three kinds of text: spaces, word characters, punctuation.
+fn kind(c: char) -> u8 {
+    if c.is_whitespace() {
+        0
+    } else if c.is_alphanumeric() || c == '_' {
+        1
+    } else {
+        2
     }
 }
 

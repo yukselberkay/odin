@@ -553,6 +553,35 @@ more room.
 | Tab / Shift-Tab | Cycle next / previous open buffer |
 | `:` | Open command prompt; Enter runs it, Escape cancels |
 
+### Language-aware typing
+
+Typing follows the language of the file, like VS Code:
+
+| Language | Enter indents after | Also |
+| --- | --- | --- |
+| Python | a line ending in `:` (`def f():`, `if x:`) | dedents after `return`, `pass`, `break`, `continue`, `raise`; `else:` / `elif` / `except` / `finally` move back under their `if` / `try` |
+| Rust, Go, C/C++, JS/TS, Java, Kotlin, Swift, C#, PHP, CSS, JSON | `{`, `(`, `[` | Go and Makefiles indent with tabs |
+| YAML, Makefile | `:` | |
+| Shell | `then`, `do`, `else`, `case … in` | |
+| Lua / Ruby | `then`, `do`, `function` / `def`, `class`, `if`, `do \|x\|` … | |
+| Markdown | | lists continue (`- `, `1.` → `2.`, `- [ ]`); Enter on an empty item ends the list |
+
+- Enter between brackets (`{|}`) opens an indented line and puts the closer on its own
+  line; a closer typed on a blank line lines up with its opener.
+- `(`, `[`, `{`, `"`, `'` (and `` ` `` in JS, Go, shell, Markdown) close themselves when
+  the next character is a space, a closer or the line end, never right after a letter
+  (`don't`; Python's `f"` and `r'` still close). Typing the closer steps over it,
+  Backspace in an empty pair removes both, and typing an opener over a Shift-selection
+  wraps it.
+- The indentation unit comes from the file (tabs, or its most common step), else the
+  language (tabs for Go, 4 spaces for Python, 2 for YAML), else `tab_width`. Tab goes to
+  the next stop, Shift-Tab dedents the line, and Backspace in leading spaces removes a
+  whole level.
+- `o` indents the new line the same way Enter would.
+
+These rules are instant and local; language servers keep to completions, diagnostics
+and formatting on save. Turn them off with `smart_indent = false` / `auto_pairs = false`.
+
 ### Find and replace
 
 **`Ctrl-f`** opens a find bar in the editor's top-right corner, filled in with the
@@ -1083,7 +1112,9 @@ theme immediately. The configuration supports:
 | --- | --- | --- |
 | `theme` | `"phosphor"` | Any bundled theme above, `phosphor`/`amber`, or a user theme name |
 | `sidebar_width` | `29` | Columns, clamped to 18–60 |
-| `tab_width` | `4` | Spaces inserted by Tab, clamped to 1–16 |
+| `tab_width` | `4` | Indentation width when a file and its language don't decide it, clamped to 1–16 |
+| `smart_indent` | `true` | [Language-aware](#language-aware-typing) Enter, `o`, Tab/Shift-Tab and closers |
+| `auto_pairs` | `true` | Brackets and quotes close themselves; typing the closer steps over it |
 | `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
 | `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
 | `git_pane` | `false` | Open the Git pane (branches, commit graph, details) at startup |

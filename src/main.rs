@@ -7,6 +7,7 @@ mod fonts;
 mod gitgraph;
 mod highlight;
 mod icons;
+mod language;
 mod layout;
 mod local_ai;
 mod lsp;

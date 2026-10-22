@@ -5,6 +5,7 @@ use crate::{
     editor::Buffer,
     gitgraph::{self, GitView},
     highlight::Syntax,
+    language,
     layout::{Axis, Tile},
     lsp::{self, Lsp},
     markdown::{self, Previews},
@@ -1928,8 +1929,26 @@ impl App {
                 let key = KeyEvent::new(code, key.modifiers - KeyModifiers::SHIFT);
                 self.normal_key(key)?;
             }
-            // Typing over a Shift-selection replaces it.
+            // Typing over a Shift-selection replaces it; an opening bracket or quote
+            // wraps it instead.
             KeyCode::Char(c) if from_insert => {
+                let wrapped = match (self.selection(), self.buffer_id()) {
+                    (Some((start, end)), Some(id)) if self.config.auto_pairs => {
+                        let b = &self.buffers[id];
+                        let rules = language::Rules::new(b, self.config.tab_width);
+                        language::surround(&rules, c, &b.slice(start, end))
+                            .map(|text| (start, end, text))
+                    }
+                    _ => None,
+                };
+                if let Some((start, end, text)) = wrapped {
+                    if let Some(b) = self.active_buffer() {
+                        b.anchor = None;
+                        b.replace(start, end, &text);
+                    }
+                    self.mode = self.visual_from;
+                    return Ok(());
+                }
                 self.delete_selection();
                 if let Some(b) = self.active_buffer() {
                     b.insert(&c.to_string());
@@ -2492,9 +2511,14 @@ impl App {
     }
     fn insert_edit(&mut self, key: KeyEvent) -> Result<()> {
         let width = self.config.tab_width;
+        let typing = language::Typing {
+            auto_pairs: self.config.auto_pairs,
+            smart_indent: self.config.smart_indent,
+        };
         let Some(buffer) = self.active_buffer() else {
             return Ok(());
         };
+        let rules = language::Rules::new(buffer, width);
         match key.code {
             KeyCode::Esc => {
                 buffer.end_group();
@@ -2505,11 +2529,13 @@ impl App {
                     .modifiers
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
-                buffer.insert(&c.to_string())
+                language::type_char(buffer, &rules, c, typing)
             }
+            KeyCode::Enter if typing.smart_indent => language::enter(buffer, &rules),
             KeyCode::Enter => buffer.newline(),
-            KeyCode::Tab => buffer.insert(&" ".repeat(width)),
-            KeyCode::Backspace => buffer.backspace(),
+            KeyCode::Tab => language::tab(buffer, &rules),
+            KeyCode::BackTab => language::dedent(buffer, &rules),
+            KeyCode::Backspace => language::backspace(buffer, &rules, typing),
             KeyCode::Delete => buffer.delete_char(),
             KeyCode::Left => {
                 buffer.end_group();
@@ -2580,6 +2606,8 @@ impl App {
         let Some(id) = self.buffer_id() else {
             return Ok(());
         };
+        let smart = self.config.smart_indent;
+        let rules = language::Rules::new(&self.buffers[id], self.config.tab_width);
         let b = &mut self.buffers[id];
         if ctrl {
             match key.code {
@@ -2684,6 +2712,10 @@ impl App {
             KeyCode::Char('I') => {
                 b.home();
                 b.end_group();
+                self.mode = Mode::Insert;
+            }
+            KeyCode::Char('o') if smart => {
+                language::open_line(b, &rules, false);
                 self.mode = Mode::Insert;
             }
             KeyCode::Char('o') => {
@@ -4027,6 +4059,55 @@ mod tests {
         assert!(app.sidebar_focus && !app.git_focus);
         assert!(app.tree.expanded.contains(&model));
         assert_eq!(app.tree.entries[app.tree.selected].path, model);
+    }
+    #[test]
+    fn typing_python_indents_after_a_colon_and_closes_brackets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.py");
+        std::fs::write(&path, "").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let keys = |app: &mut App, text: &str| {
+            for c in text.chars() {
+                let code = if c == '\n' {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Char(c)
+                };
+                press(app, code, KeyModifiers::NONE);
+            }
+        };
+        press(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
+        keys(&mut app, "def testfunc():\nprint(\"hi\")");
+        assert_eq!(
+            app.buffers[id].text.to_string(),
+            "def testfunc():\n    print(\"hi\")"
+        );
+        // Select a word with Shift+Option and type [ to wrap it.
+        press(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        press(
+            &mut app,
+            KeyCode::Left,
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        );
+        assert!(app.selection().is_some());
+        keys(&mut app, "[");
+        assert!(app.buffers[id]
+            .text
+            .to_string()
+            .ends_with("print(\"[hi]\")"));
+        // o in normal mode indents like Enter; the switches turn it off.
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        app.buffers[id].row = 0;
+        press(&mut app, KeyCode::Char('o'), KeyModifiers::NONE);
+        assert_eq!(app.buffers[id].line(1), "    ");
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        app.config.auto_pairs = false;
+        app.config.smart_indent = false;
+        press(&mut app, KeyCode::Char('A'), KeyModifiers::NONE);
+        keys(&mut app, "(\n");
+        assert!(app.buffers[id].text.to_string().contains("    (\n    \n"));
     }
     #[test]
     fn find_and_replace_like_vscode() {

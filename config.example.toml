@@ -7,6 +7,11 @@ theme = "phosphor"
 # NAME.json into ~/.config/odin/themes/ to add a theme without rebuilding.
 sidebar_width = 29
 tab_width = 4
+# Language-aware typing: Enter indents after `def f():` / `{` / `then`, dedents
+# after `return`; closers and Python's else:/except: line up with their opener.
+smart_indent = true
+# Brackets and quotes close themselves; typing the closer steps over it.
+auto_pairs = true
 relative_numbers = false
 # File-type icons in the explorer. true: Nerd Font glyphs when a Nerd Font is
 # available (Omarchy has one), else colored markers. "nerd"/"basic" force a style;

@@ -113,6 +113,11 @@ pub struct Config {
     pub theme: String,
     pub sidebar_width: u16,
     pub tab_width: usize,
+    /// Enter indents after a line that opens a block and dedents after `return`;
+    /// closers and Python's `else:` go back under their opener (see `language`).
+    pub smart_indent: bool,
+    /// Brackets and quotes close themselves; typing the closer steps over it.
+    pub auto_pairs: bool,
     pub shell: Option<String>,
     pub relative_numbers: bool,
     /// File-type icons in the explorer: `true` (auto), `"nerd"`, `"basic"` or `false`.
@@ -160,6 +165,8 @@ impl Default for Config {
             theme: "phosphor".into(),
             sidebar_width: 29,
             tab_width: 4,
+            smart_indent: true,
+            auto_pairs: true,
             shell: None,
             relative_numbers: false,
             icons: Icons::Auto,

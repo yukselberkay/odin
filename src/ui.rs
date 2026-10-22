@@ -2303,6 +2303,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ("u / Ctrl-r / Ctrl-s", "Undo / redo / atomic save"),
         ("/query / n N", "Find / next / previous; wraps around"),
         (
+            "Enter / ( [ { \" '",
+            "Indents per language / close themselves; Shift-Tab dedents",
+        ),
+        (
             "Ctrl-f / Ctrl-h",
             "Find bar / find & replace (^W whole word, ^A all)",
         ),

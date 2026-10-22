@@ -532,8 +532,30 @@ more room.
 | `u` / `Ctrl-r` | Undo / redo |
 | `/text` then Enter | Search, wrapping through the file |
 | `n` / `N` | Next / previous search result |
+| `Ctrl-f` / `Ctrl-h` | [Find / find and replace](#find-and-replace), like VS Code |
+| `:noh` | Clear search highlights |
 | Tab / Shift-Tab | Cycle next / previous open buffer |
 | `:` | Open command prompt; Enter runs it, Escape cancels |
+
+### Find and replace
+
+**`Ctrl-f`** opens a find bar in the editor's top-right corner, filled in with the
+selection, or else the word under the cursor (select it and Ctrl-f to find a
+variable). Matches light up as you type, the current one in the accent color, and
+the bar counts them ("3 of 12"). Typing replaces the filled-in text.
+
+| Key in the bar | Action |
+| --- | --- |
+| Enter / ↓, ↑ | Next / previous match |
+| `Ctrl-w` | Whole words only (`count` no longer matches `counter`) |
+| Tab or `Ctrl-h` | Show the replace field and switch between the two |
+| Enter (in Replace) | Replace this match and go to the next |
+| `Ctrl-a` | Replace all matches; one `u` undoes them all |
+| `Ctrl-u` / `Ctrl-v` | Clear the field / paste into it |
+| Esc | Close; `n` / `N` keep going, `:noh` clears the highlights |
+
+**`Ctrl-h`** opens the bar with the replace field ready. Searches ignore case until
+you type a capital letter (`Count` then matches only `Count`; the bar shows `Aa`).
 
 Character movement is UTF-8-aware, not grapheme-cluster-aware. This is a documented
 Vim subset, not full Vim: block selection, arbitrary operators, macros and numeric

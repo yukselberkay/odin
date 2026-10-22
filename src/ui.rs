@@ -417,7 +417,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             None => {}
         }
     }
-    if app.input.is_none() {
+    if let Some(find) = &app.find {
+        let pane = app.rectangles.iter().find(|(id, _)| *id == app.focused);
+        if let Some(&(_, rect)) = pane {
+            find_bar(frame, find, &app.buffers[find.buffer], rect, &theme);
+        }
+    }
+    if app.input.is_none() && app.find.is_none() {
         if let Some(at) = app.cursor_at.filter(|_| app.buffer_id().is_some()) {
             if app.menu.is_some() {
                 completion_menu(frame, app, at, area);
@@ -995,10 +1001,19 @@ fn editor(
             }
         }
         // Search marks are rendered after syntax, but never alter the source.
+        // The match under the cursor stands out, as in VS Code's find.
         if !buffer.search.is_empty() {
-            for (byte, matched) in raw.match_indices(&buffer.search) {
+            let found = crate::editor::find_all(
+                &raw,
+                &buffer.search,
+                !buffer.search_case,
+                buffer.search_word,
+            );
+            for (byte, end) in found {
                 let x = display_width(raw[..byte].chars(), tab_width);
-                let len = display_width(matched.chars(), tab_width);
+                let len = display_width(raw[byte..end].chars(), tab_width);
+                let here = current_row && raw[..byte].chars().count() == buffer.col;
+                let bg = if here { &theme.accent } else { &theme.warning };
                 let from = x.max(buffer.hscroll);
                 let to = (x + len).min(buffer.hscroll + width as usize);
                 for col in from..to {
@@ -1006,8 +1021,7 @@ fn editor(
                         .buffer_mut()
                         .cell_mut((area.x + gutter + (col - buffer.hscroll) as u16, y))
                     {
-                        cell.set_bg(color(&theme.warning))
-                            .set_fg(color(&theme.background));
+                        cell.set_bg(color(bg)).set_fg(color(&theme.background));
                     }
                 }
             }
@@ -1116,6 +1130,92 @@ fn completion_menu(frame: &mut Frame, app: &App, at: (u16, u16), screen: Rect) {
                 Rect::new(inner.x, inner.y + offset as u16, inner.width, 1),
             );
         }
+    }
+}
+
+/// The find / replace bar in the top-right corner of the editor, like VS Code's.
+fn find_bar(
+    frame: &mut Frame,
+    find: &crate::app::Find,
+    buffer: &Buffer,
+    pane: Rect,
+    theme: &Theme,
+) {
+    let width = 58.min(pane.width.saturating_sub(2));
+    let height = if find.replacing { 4 } else { 3 };
+    if width < 24 || pane.height < height + 2 {
+        return;
+    }
+    let rect = Rect::new(pane.right() - 1 - width, pane.y + 1, width, height);
+    frame.render_widget(Clear, rect);
+    let title = if find.replacing {
+        " Find & replace "
+    } else {
+        " Find "
+    };
+    let block = panel(title, theme, true).style(Style::default().bg(color(&theme.background)));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let (at, total) = buffer.match_position();
+    let status = match (find.query.is_empty(), total) {
+        (true, _) => String::new(),
+        (false, 0) => "No results".to_string(),
+        (false, n) if at == 0 => format!("? of {n}"),
+        (false, n) => format!("{at} of {n}"),
+    };
+    let flags = format!(
+        "{}{}",
+        if buffer.search_case { " Aa" } else { "" },
+        if find.whole_word { " ab|" } else { "" }
+    );
+    let right = format!("{status}{flags} ");
+    let right_width = right.chars().count() as u16;
+    let label = 9;
+    let field_width = inner.width.saturating_sub(label + right_width + 1) as usize;
+    let mut cursor = None;
+    let rows = [
+        ("Find", &find.query, !find.in_replace),
+        ("Replace", &find.replace, find.in_replace),
+    ];
+    for (row, (name, value, typing)) in rows.iter().take(inner.height as usize).enumerate() {
+        let y = inner.y + row as u16;
+        text(
+            frame,
+            Rect::new(inner.x, y, label, 1),
+            format!(" {name}"),
+            color(if *typing { &theme.accent } else { &theme.muted }),
+        );
+        // The end of a long value stays in view, where you type.
+        let chars: Vec<char> = value.chars().collect();
+        let shown: String = chars[chars.len().saturating_sub(field_width.saturating_sub(1))..]
+            .iter()
+            .collect();
+        let shown = printable(&shown);
+        let mut style = Style::default().fg(color(&theme.foreground));
+        if row == 0 && find.fresh {
+            style = style.bg(color(&theme.selection));
+        }
+        frame.render_widget(
+            Paragraph::new(shown.clone()).style(style),
+            Rect::new(inner.x + label, y, field_width as u16, 1),
+        );
+        if *typing {
+            let x = display_width(shown.chars(), 4).min(field_width) as u16;
+            cursor = Some((inner.x + label + x, y));
+        }
+    }
+    text(
+        frame,
+        Rect::new(inner.right() - right_width, inner.y, right_width, 1),
+        right,
+        color(if total == 0 && !find.query.is_empty() {
+            &theme.warning
+        } else {
+            &theme.muted
+        }),
+    );
+    if let Some(at) = cursor {
+        frame.set_cursor_position(at);
     }
 }
 
@@ -1759,6 +1859,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         "PREFIX"
     } else if app.copy.is_some() {
         "COPY"
+    } else if app.find.is_some() {
+        "FIND"
     } else if app.help && app.help_focus {
         "GUIDE"
     } else if app.sidebar_focus {
@@ -1832,7 +1934,13 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         let x = (value.chars().count() as u16).min(area.width.saturating_sub(1));
         frame.set_cursor_position((area.x + x, area.y + 1));
     } else {
-        let hints = if app.copy.is_some() {
+        let hints = if let Some(find) = &app.find {
+            if find.replacing {
+                " Enter replace   ^A replace all   ↑ ↓ previous/next   Tab find/replace   ^W whole word   Esc close"
+            } else {
+                " Enter ↓ next   ↑ previous   Tab or ^H replace   ^W whole word   Esc close (n N keep going)"
+            }
+        } else if app.copy.is_some() {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
             " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
@@ -2021,6 +2129,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ),
         ("u / Ctrl-r / Ctrl-s", "Undo / redo / atomic save"),
         ("/query / n N", "Find / next / previous; wraps around"),
+        (
+            "Ctrl-f / Ctrl-h",
+            "Find bar / find & replace (^W whole word, ^A all)",
+        ),
         ("Tab / Shift-Tab", "Cycle open buffers"),
         ("MARKDOWN", ".md files open rendered; edits re-render live"),
         (

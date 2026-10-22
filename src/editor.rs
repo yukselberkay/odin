@@ -30,6 +30,10 @@ pub struct Buffer {
     pub dirty: bool,
     pub crlf: bool,
     pub search: String,
+    /// Search options: `/` matches case exactly; the find bar ignores case unless the
+    /// query has a capital letter, and can match whole words only.
+    pub search_case: bool,
+    pub search_word: bool,
     /// Selection start (char index) while selecting; the cursor is the other end.
     pub anchor: Option<usize>,
     saved: Rope,
@@ -59,6 +63,8 @@ impl Buffer {
             dirty: false,
             crlf: false,
             search: String::new(),
+            search_case: true,
+            search_word: false,
             anchor: None,
             saved: Rope::new(),
             disk_hash: None,
@@ -177,7 +183,7 @@ impl Buffer {
         self.revision += 1;
         self.dirty = true;
     }
-    fn set_index(&mut self, index: usize) {
+    pub fn set_index(&mut self, index: usize) {
         let i = index.min(self.text.len_chars());
         self.row = self.text.char_to_line(i);
         self.col = i - self.text.line_to_char(self.row);
@@ -425,37 +431,76 @@ impl Buffer {
         }
         self.set_index(i);
     }
-    pub fn find(&mut self, backwards: bool) -> bool {
+    /// Char ranges of every match of the search, in order.
+    pub fn search_ranges(&self) -> Vec<(usize, usize)> {
         if self.search.is_empty() {
-            return false;
+            return Vec::new();
         }
         let all = self.text.to_string();
-        let current = self.text.char_to_byte(self.index());
+        find_all(&all, &self.search, !self.search_case, self.search_word)
+            .into_iter()
+            .map(|(start, end)| (self.text.byte_to_char(start), self.text.byte_to_char(end)))
+            .collect()
+    }
+    /// Move to the next match after the cursor (or the one before), wrapping around.
+    pub fn find(&mut self, backwards: bool) -> bool {
+        let ranges = self.search_ranges();
+        let i = self.index();
         let found = if backwards {
-            all[..current]
-                .rfind(&self.search)
-                .or_else(|| all.rfind(&self.search))
+            ranges.iter().rev().find(|r| r.0 < i).or(ranges.last())
         } else {
-            let skip = if current < all.len() {
-                all[current..]
-                    .chars()
-                    .next()
-                    .map(char::len_utf8)
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-            all[current + skip..]
-                .find(&self.search)
-                .map(|i| i + current + skip)
-                .or_else(|| all.find(&self.search))
+            ranges.iter().find(|r| r.0 > i).or(ranges.first())
         };
-        if let Some(byte) = found {
-            self.set_index(self.text.byte_to_char(byte));
-            true
-        } else {
-            false
+        match found {
+            Some(&(start, _)) => {
+                self.set_index(start);
+                true
+            }
+            None => false,
         }
+    }
+    /// Move to the first match starting at `index` or later, wrapping around.
+    pub fn find_from(&mut self, index: usize) -> bool {
+        let ranges = self.search_ranges();
+        match ranges.iter().find(|r| r.0 >= index).or(ranges.first()) {
+            Some(&(start, _)) => {
+                self.set_index(start);
+                true
+            }
+            None => false,
+        }
+    }
+    /// (which match the cursor is on, counting from 1, or 0; how many there are).
+    pub fn match_position(&self) -> (usize, usize) {
+        let ranges = self.search_ranges();
+        let i = self.index();
+        let at = ranges.iter().position(|r| r.0 == i).map_or(0, |n| n + 1);
+        (at, ranges.len())
+    }
+    /// Replace the match under the cursor and move to the next one. False when the
+    /// cursor isn't on a match (it moves to the next one instead).
+    pub fn replace_match(&mut self, with: &str) -> bool {
+        let i = self.index();
+        let Some((start, end)) = self.search_ranges().into_iter().find(|r| r.0 == i) else {
+            self.find(false);
+            return false;
+        };
+        self.replace(start, end, with);
+        let after = self.index();
+        self.find_from(after);
+        true
+    }
+    /// Replace every match as one undo step; returns how many.
+    pub fn replace_all(&mut self, with: &str) -> usize {
+        let ranges = self.search_ranges();
+        let count = ranges.len();
+        self.apply_edits(
+            ranges
+                .into_iter()
+                .map(|(start, end)| (start, end, with.to_string()))
+                .collect(),
+        );
+        count
     }
     pub fn save(&mut self, new_path: Option<PathBuf>) -> Result<()> {
         let proposed = new_path
@@ -539,9 +584,72 @@ impl Buffer {
     }
 }
 
+/// Byte ranges of `needle` in `haystack`, left to right and not overlapping;
+/// `ignore_case` compares letters case-insensitively, `whole_word` keeps only matches
+/// with no letter, digit or `_` right before or after them.
+pub fn find_all(
+    haystack: &str,
+    needle: &str,
+    ignore_case: bool,
+    whole_word: bool,
+) -> Vec<(usize, usize)> {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let mut found = Vec::new();
+    if needle.is_empty() {
+        return found;
+    }
+    let mut from = 0;
+    while from < haystack.len() {
+        let next = if ignore_case {
+            haystack[from..].char_indices().find_map(|(at, _)| {
+                let start = from + at;
+                let mut rest = haystack[start..].char_indices();
+                let mut end = start;
+                for wanted in needle.chars() {
+                    let (offset, c) = rest.next()?;
+                    if !c.to_lowercase().eq(wanted.to_lowercase()) {
+                        return None;
+                    }
+                    end = start + offset + c.len_utf8();
+                }
+                Some((start, end))
+            })
+        } else {
+            haystack[from..]
+                .find(needle)
+                .map(|at| (from + at, from + at + needle.len()))
+        };
+        let Some((start, end)) = next else {
+            break;
+        };
+        let alone = !whole_word
+            || (!word(haystack[..start].chars().next_back())
+                && !word(haystack[end..].chars().next()));
+        if alone {
+            found.push((start, end));
+            from = end;
+        } else {
+            from = start + haystack[start..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn find_all_ignores_case_and_keeps_whole_words() {
+        let text = "Ünïcode ünïcode_x x ünïcode";
+        assert_eq!(find_all(text, "ünïcode", false, false).len(), 2);
+        assert_eq!(find_all(text, "ünïcode", true, false).len(), 3);
+        let words = find_all(text, "ünïcode", true, true);
+        assert_eq!(words.len(), 2, "not inside ünïcode_x");
+        assert_eq!(&text[words[1].0..words[1].1], "ünïcode");
+        assert_eq!(find_all("aaaa", "aa", false, false), vec![(0, 2), (2, 4)]);
+        assert_eq!(find_all("x", "", true, true), vec![]);
+        assert_eq!(find_all("ab_ab ab", "ab", false, true), vec![(6, 8)]);
+    }
     #[test]
     fn unicode_edit_undo_redo() {
         let mut b = Buffer::empty();

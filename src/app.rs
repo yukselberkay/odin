@@ -74,6 +74,22 @@ pub struct Input {
     pub text: String,
 }
 
+/// The find / replace bar over an editor (Ctrl-f, Ctrl-h), as in VS Code.
+pub struct Find {
+    pub buffer: usize,
+    pub query: String,
+    pub replace: String,
+    /// The replace row is shown, and typing goes to it when `in_replace`.
+    pub replacing: bool,
+    pub in_replace: bool,
+    pub whole_word: bool,
+    /// The query was filled in for you (selection or word under the cursor); the
+    /// first key typed replaces it.
+    pub fresh: bool,
+    /// Where the cursor was when the bar opened: the search starts there as you type.
+    origin: usize,
+}
+
 /// Theme chooser: moving previews a theme live, Enter keeps it, Esc restores.
 pub struct ThemePicker {
     /// (name, origin: "built in" / "your file" / "omarchy")
@@ -279,6 +295,10 @@ pub struct App {
     /// terminal's own mouse selection picks up nothing else. Holds when it began,
     /// for the hint shown briefly at the start.
     pub copy_view: Option<Instant>,
+    /// The find / replace bar (Ctrl-f, Ctrl-h).
+    pub find: Option<Find>,
+    /// The replace text and whole-word choice from the last find, for the next one.
+    find_last: (String, bool),
 }
 
 impl App {
@@ -348,6 +368,8 @@ impl App {
             remote: None,
             diffs: HashMap::new(),
             copy: None,
+            find: None,
+            find_last: (String::new(), false),
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -1187,7 +1209,10 @@ impl App {
         let result = match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key),
             Event::Paste(text) => {
-                if let Some(input) = &mut self.input {
+                if self.find.is_some() {
+                    self.find_type(&text);
+                    Ok(())
+                } else if let Some(input) = &mut self.input {
                     input.text.extend(text.chars().filter(|c| !c.is_control()));
                     Ok(())
                 } else if let Some(Pane::Terminal(terminal)) = self.panes.get_mut(&self.focused) {
@@ -1277,6 +1302,9 @@ impl App {
         if self.input.is_some() {
             return self.input_key(key);
         }
+        if self.find.is_some() {
+            return self.find_key(key);
+        }
         if let Some(at) = self.text_size_repeat.take() {
             if let (KeyCode::Char(c), true) = (key.code, at.elapsed() < Duration::from_secs(1)) {
                 if let Some(step) = textsize::Step::key(c) {
@@ -1349,6 +1377,13 @@ impl App {
             }
             _ => {}
         }
+        if ctrl
+            && self.buffer_id().is_some()
+            && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('h'))
+        {
+            self.open_find(key.code == KeyCode::Char('h'));
+            return Ok(());
+        }
         if matches!(self.mode, Mode::Visual | Mode::VisualLine) {
             return self.visual_key(key);
         }
@@ -1369,6 +1404,167 @@ impl App {
             return self.insert_key(key);
         }
         self.normal_key(key)
+    }
+    /// Ctrl-f / Ctrl-h: open the find bar on the selection (one line of it), else the
+    /// word under the cursor, else the last search; Ctrl-h also shows the replace row.
+    fn open_find(&mut self, replacing: bool) {
+        let Some(id) = self.buffer_id() else {
+            return;
+        };
+        let selected = self.selection().and_then(|(start, end)| {
+            let text = self.buffers[id].slice(start, end);
+            (!text.is_empty() && !text.contains('\n')).then_some((text, start))
+        });
+        if matches!(self.mode, Mode::Visual | Mode::VisualLine) {
+            self.end_visual();
+        }
+        let b = &self.buffers[id];
+        let (query, origin) = selected
+            .or_else(|| word_at(b))
+            .unwrap_or_else(|| (b.search.clone(), b.index()));
+        let (replace, whole_word) = self.find_last.clone();
+        self.find = Some(Find {
+            buffer: id,
+            in_replace: replacing && !query.is_empty(),
+            fresh: !query.is_empty(),
+            query,
+            replace,
+            replacing,
+            whole_word,
+            origin,
+        });
+        self.apply_find();
+    }
+    /// Search for the bar's query from where it opened, as you type.
+    fn apply_find(&mut self) {
+        let Some(find) = &self.find else {
+            return;
+        };
+        let b = &mut self.buffers[find.buffer];
+        b.search = find.query.clone();
+        // Smart case: a capital letter makes the search match case.
+        b.search_case = find.query.chars().any(char::is_uppercase);
+        b.search_word = find.whole_word;
+        if find.query.is_empty() {
+            b.set_index(find.origin);
+        } else {
+            b.find_from(find.origin);
+        }
+    }
+    fn close_find(&mut self) {
+        if let Some(find) = self.find.take() {
+            self.find_last = (find.replace, find.whole_word);
+        }
+    }
+    /// Text typed or pasted into the find bar's active field.
+    fn find_type(&mut self, text: &str) {
+        let Some(find) = self.find.as_mut() else {
+            return;
+        };
+        let text: String = text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
+        if find.in_replace {
+            find.replace.push_str(&text);
+        } else {
+            if std::mem::take(&mut find.fresh) {
+                find.query.clear();
+            }
+            find.query.push_str(&text);
+            self.apply_find();
+        }
+    }
+    fn find_key(&mut self, key: KeyEvent) -> Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // Ctrl-b, Ctrl-s and Ctrl-q still work: close the bar, then act on them.
+        if ctrl && matches!(key.code, KeyCode::Char('b' | 's' | 'q')) {
+            self.close_find();
+            return self.key(key);
+        }
+        let Some(find) = self.find.as_mut() else {
+            return Ok(());
+        };
+        let id = find.buffer;
+        let fresh = std::mem::take(&mut find.fresh);
+        match key.code {
+            KeyCode::Esc => self.close_find(),
+            KeyCode::Enter if find.in_replace => {
+                let with = find.replace.clone();
+                let b = &mut self.buffers[id];
+                if b.replace_match(&with) {
+                    let (_, left) = b.match_position();
+                    self.notice(format!("Replaced 1 · {left} left · ^A replaces all"));
+                }
+            }
+            KeyCode::Enter | KeyCode::Down => {
+                if !self.buffers[id].find(false) {
+                    self.notice("No results");
+                }
+            }
+            KeyCode::Up => {
+                self.buffers[id].find(true);
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                find.replacing = true;
+                find.in_replace = !find.in_replace;
+            }
+            KeyCode::Char('f') if ctrl => find.in_replace = false,
+            KeyCode::Char('h') if ctrl => {
+                find.replacing = true;
+                find.in_replace = true;
+            }
+            KeyCode::Char('w') if ctrl => {
+                find.whole_word = !find.whole_word;
+                find.origin = self.buffers[id].index();
+                self.apply_find();
+            }
+            KeyCode::Char('a') if ctrl && find.replacing => {
+                let with = find.replace.clone();
+                let count = self.buffers[id].replace_all(&with);
+                self.notice(match count {
+                    0 => "No results".to_string(),
+                    1 => "Replaced 1 match".to_string(),
+                    n => format!("Replaced {n} matches · u undoes them at once"),
+                });
+            }
+            KeyCode::Char('u') if ctrl => {
+                if find.in_replace {
+                    find.replace.clear();
+                } else {
+                    find.query.clear();
+                    self.apply_find();
+                }
+            }
+            KeyCode::Char('v') if ctrl => {
+                let (text, _) = self.clipboard.paste();
+                if let Some(find) = self.find.as_mut() {
+                    find.fresh = fresh;
+                }
+                self.find_type(&text);
+            }
+            KeyCode::Backspace => {
+                if find.in_replace {
+                    find.replace.pop();
+                } else {
+                    if fresh {
+                        find.query.clear();
+                    } else {
+                        find.query.pop();
+                    }
+                    self.apply_find();
+                }
+            }
+            KeyCode::Char(c) if !ctrl => {
+                find.fresh = fresh;
+                self.find_type(&c.to_string());
+            }
+            _ => {}
+        }
+        Ok(())
     }
     fn start_visual(&mut self, mode: Mode) {
         let from = if self.mode == Mode::Insert {
@@ -2819,6 +3015,8 @@ impl App {
                     InputKind::Search => {
                         if let Some(b) = self.active_buffer() {
                             b.search = input.text;
+                            b.search_case = true;
+                            b.search_word = false;
                             if !b.find(false) {
                                 self.notice("No match");
                             }
@@ -2998,6 +3196,11 @@ impl App {
                 self.notice("Explorer: selected folder expanded, with everything inside");
             }
             // :zoom in / out / reset changes the text size; bare :zoom maximizes the pane.
+            "noh" | "nohlsearch" => {
+                if let Some(b) = self.active_buffer() {
+                    b.search.clear();
+                }
+            }
             "sound" => {
                 sound::play(&self.config.ai_sound);
                 self.notice(format!(
@@ -3140,6 +3343,27 @@ impl App {
     }
 }
 
+/// The word (letters, digits, `_`) under or just before the cursor, and where it
+/// starts (a char index).
+fn word_at(b: &Buffer) -> Option<(String, usize)> {
+    let line: Vec<char> = b.line(b.row).chars().collect();
+    let word = |i: usize| {
+        line.get(i)
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+    };
+    let mut at = b.col.min(line.len());
+    if !word(at) && at > 0 && word(at - 1) {
+        at -= 1;
+    }
+    if !word(at) {
+        return None;
+    }
+    let start = (0..=at).rev().take_while(|&i| word(i)).last()?;
+    let end = (at..line.len()).take_while(|&i| word(i)).last()? + 1;
+    let text = line[start..end].iter().collect();
+    Some((text, b.text.line_to_char(b.row) + start))
+}
+
 /// Keys that move the cursor in every mode (and extend a selection with Shift).
 fn is_motion(code: KeyCode) -> bool {
     matches!(
@@ -3191,6 +3415,94 @@ mod tests {
         press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
         assert_eq!(app.active_buffer().unwrap().row, 1);
         assert!(app.quit(false).is_ok());
+    }
+    #[test]
+    fn find_and_replace_like_vscode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.js");
+        std::fs::write(
+            &path,
+            "let count = 1;\nlet counter = count + 2;\nprint(count, Count);\n",
+        )
+        .unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let ctrl = |app: &mut App, c| press(app, KeyCode::Char(c), KeyModifiers::CONTROL);
+        let typed = |app: &mut App, text: &str| {
+            for c in text.chars() {
+                press(app, KeyCode::Char(c), KeyModifiers::NONE);
+            }
+        };
+        let at = |app: &App| app.buffers[id].match_position();
+        // Ctrl-f takes the word under the cursor; lower case ignores case.
+        app.buffers[id].col = 5;
+        ctrl(&mut app, 'f');
+        assert_eq!(app.find.as_ref().unwrap().query, "count");
+        assert_eq!(at(&app), (1, 5), "count, counter, count, count, Count");
+        // Ctrl-w: whole words only, so "counter" drops out.
+        ctrl(&mut app, 'w');
+        assert_eq!(at(&app), (1, 4));
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(at(&app), (2, 4));
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(at(&app), (1, 4));
+        let shown = screen(&mut app, 100, 20).join("\n");
+        assert!(shown.contains("1 of 4"), "{shown}");
+        // Ctrl-h: replace one with Enter, then the rest with Ctrl-a, one undo step.
+        ctrl(&mut app, 'h');
+        typed(&mut app, "total");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.buffers[id]
+            .text
+            .to_string()
+            .starts_with("let total = 1;"));
+        assert_eq!(at(&app), (1, 3), "on to the next one");
+        assert!(screen(&mut app, 100, 20)
+            .join("\n")
+            .contains("Find & replace"));
+        ctrl(&mut app, 'a');
+        assert_eq!(
+            app.buffers[id].text.to_string(),
+            "let total = 1;\nlet counter = total + 2;\nprint(total, total);\n"
+        );
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.find.is_none());
+        press(&mut app, KeyCode::Char('u'), KeyModifiers::NONE);
+        assert_eq!(
+            app.buffers[id].text.to_string(),
+            "let total = 1;\nlet counter = count + 2;\nprint(count, Count);\n"
+        );
+        // Typing replaces the filled-in word; a capital letter matches case. The
+        // replace text and whole-word choice carry over.
+        app.buffers[id].row = 1;
+        app.buffers[id].col = 6;
+        ctrl(&mut app, 'f');
+        assert_eq!(app.find.as_ref().unwrap().query, "counter");
+        assert_eq!(app.find.as_ref().unwrap().replace, "total");
+        typed(&mut app, "Count");
+        assert_eq!(app.find.as_ref().unwrap().query, "Count");
+        assert_eq!(at(&app), (1, 1));
+        assert_eq!((app.buffers[id].row, app.buffers[id].col), (2, 13));
+        press(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+        typed(&mut app, "zzz");
+        assert!(screen(&mut app, 100, 20).join("\n").contains("No results"));
+        // Ctrl-b closes the bar and still works; a selection fills the bar in.
+        ctrl(&mut app, 'b');
+        assert!(app.find.is_none() && app.prefix);
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        app.buffers[id].row = 0;
+        app.buffers[id].col = 0;
+        press(&mut app, KeyCode::Char('v'), KeyModifiers::NONE);
+        typed(&mut app, "ll");
+        ctrl(&mut app, 'f');
+        assert_eq!(app.find.as_ref().unwrap().query, "let");
+        assert_eq!(app.mode, Mode::Normal);
+        // :noh clears the highlights; n keeps searching after Esc otherwise.
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
+        assert_eq!(app.buffers[id].row, 1);
+        app.command("noh").unwrap();
+        assert!(app.buffers[id].search.is_empty());
     }
     #[test]
     fn copy_cut_paste_with_selection_lines_and_shift_arrows() {

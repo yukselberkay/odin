@@ -2092,7 +2092,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Fold folder / collapse all / expand all inside",
         ),
         ("r / n", "Refresh / new file"),
-        ("Ctrl-p / Tab", "Open path / complete visible paths"),
+        ("Ctrl-p / Tab", "Open path / complete files and folders"),
         ("EDITOR", "Vim-inspired, not a full Vim implementation"),
         (
             "i a I A o O / Esc",

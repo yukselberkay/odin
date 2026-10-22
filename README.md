@@ -333,7 +333,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl-e` | Focus the file explorer (also from the Git section); in the explorer, return to the pane |
-| `Ctrl-p` | Open a path; Tab completes currently visible tree entries |
+| `Ctrl-p` | Open a path; Tab completes files and folders, and inside folders (Enter on a folder opens it in the explorer) |
 | `Ctrl-s` | Save editor buffer |
 | `Ctrl-q` | Quit, refusing unsaved buffers |
 | `Ctrl-b %` / `Ctrl-b "` | Side-by-side / stacked editor split |
@@ -741,8 +741,12 @@ Colors come from the active theme.
 ### Prompt and buffer behavior
 
 Command/search/path prompts support typing, Backspace, Enter and Escape. In the
-Ctrl-p path prompt, Tab completes from the **currently expanded file tree**; it
-is not a fuzzy full-project index. Editor paths may be absolute or workspace-relative;
+Ctrl-p path prompt, Tab completes like a shell, from the files on disk: a single
+match is filled in, folders with a trailing `/` so the next Tab completes what's
+inside; several matches fill in what they share and are listed, and more Tabs step
+through them. Hidden names complete once you type the leading `.`, and case is
+ignored when nothing matches exactly. Enter on a folder opens it in the explorer.
+It is not a fuzzy full-project index. Editor paths may be absolute or workspace-relative;
 `~` and shell variables are not expanded there. Type paths with spaces directly,
 without shell quotes. Shell commands follow your shell's normal quoting rules.
 

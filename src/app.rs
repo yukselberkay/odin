@@ -3111,7 +3111,10 @@ impl App {
                         }
                     }
                     InputKind::Open => {
-                        if !input.text.is_empty() {
+                        let path = self.root.join(&input.text);
+                        if !input.text.is_empty() && path.is_dir() {
+                            self.show_folder(&path)?;
+                        } else if !input.text.is_empty() {
                             self.open(Path::new(&input.text))?;
                         }
                     }
@@ -3138,24 +3141,73 @@ impl App {
                     return Ok(());
                 }
                 if kind == InputKind::Open {
-                    let mut matches = self
-                        .tree
-                        .entries
-                        .iter()
-                        .filter_map(|e| {
-                            e.path
-                                .strip_prefix(&self.root)
-                                .ok()
-                                .map(|p| p.to_string_lossy().into_owned())
-                        })
-                        .filter(|p| p.starts_with(&text));
-                    if let Some(found) = matches.next() {
-                        self.input.as_mut().expect("input active").text = found;
-                    }
+                    self.complete_open(&text);
                 }
             }
             _ => {}
         }
+        Ok(())
+    }
+    /// Tab in Ctrl-p completes the path like a shell: one match is filled in (a
+    /// folder with `/`, so the next Tab goes inside it); several fill in what they
+    /// share and are listed, and Tab again steps through them.
+    fn complete_open(&mut self, text: &str) {
+        let (typed, step) = match self.completion.take() {
+            Some((typed, index)) => (typed, Some(index + 1)),
+            None => (text.to_string(), None),
+        };
+        let found = workspace::complete_path(&self.root, &typed);
+        let mut fill = |value: &str| {
+            if let Some(input) = self.input.as_mut() {
+                input.text = value.to_string();
+            }
+        };
+        match (found.len(), step) {
+            (0, _) => self.notice(format!("Nothing matches {}", workspace::printable(&typed))),
+            (1, _) => fill(&found[0]),
+            (n, Some(index)) => {
+                fill(&found[index % n]);
+                self.completion = Some((typed, index));
+            }
+            (n, None) => {
+                let shared = found.iter().skip(1).fold(found[0].clone(), |shared, next| {
+                    shared
+                        .chars()
+                        .zip(next.chars())
+                        .take_while(|(a, b)| a == b)
+                        .map(|(a, _)| a)
+                        .collect()
+                });
+                if shared.chars().count() > typed.chars().count() {
+                    fill(&shared);
+                } else {
+                    fill(&found[0]);
+                    self.completion = Some((typed.clone(), 0));
+                }
+                let folder = typed.rfind('/').map_or(0, |at| at + 1);
+                let names: Vec<&str> = found.iter().map(|f| &f[folder..]).take(12).collect();
+                let more = if n > 12 { "  …" } else { "" };
+                self.notice(format!(
+                    "{n} matches · Tab steps through: {}{more}",
+                    names.join("  ")
+                ));
+            }
+        }
+    }
+    /// Enter on a folder in Ctrl-p: show it, opened, in the explorer.
+    fn show_folder(&mut self, path: &Path) -> Result<()> {
+        let dir = path.canonicalize()?;
+        if !dir.starts_with(&self.root) {
+            bail!("{} is outside this project", path.display());
+        }
+        self.sidebar_visible = true;
+        self.sidebar_focus = true;
+        self.git_focus = false;
+        if dir != self.root {
+            self.tree.expanded.insert(dir.clone());
+            self.tree.reveal(&dir);
+        }
+        self.notice("Folder opened in the explorer");
         Ok(())
     }
     pub fn command(&mut self, command: &str) -> Result<()> {
@@ -3589,6 +3641,61 @@ mod tests {
         // Ctrl+arrows (Linux, Windows) move by word too.
         press(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
         assert_eq!(col(&app), (0, 3));
+    }
+    #[test]
+    fn ctrl_p_tab_completes_folders_and_what_is_inside_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for file in ["src/main.rs", "src/model/user.rs", "scripts/run.sh", ".env"] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "x\n").unwrap();
+        }
+        let mut app = App::new(root.clone(), None, false).unwrap();
+        let text = |app: &App| app.input.as_ref().unwrap().text.clone();
+        let typed = |app: &mut App, keys: &str| {
+            for c in keys.chars() {
+                let code = match c {
+                    '\t' => KeyCode::Tab,
+                    '\n' => KeyCode::Enter,
+                    c => KeyCode::Char(c),
+                };
+                press(app, code, KeyModifiers::NONE);
+            }
+        };
+        press(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        // Two folders start with s: listed, and Tab steps through them.
+        typed(&mut app, "s\t");
+        assert_eq!(text(&app), "scripts/");
+        assert!(app.message.contains("2 matches"), "{}", app.message);
+        typed(&mut app, "\t");
+        assert_eq!(text(&app), "src/");
+        // Into the folder: what they share is filled in, then one is left.
+        typed(&mut app, "mo\t");
+        assert_eq!(text(&app), "src/model/");
+        typed(&mut app, "\t");
+        assert_eq!(text(&app), "src/model/user.rs");
+        typed(&mut app, "\n");
+        assert!(app.buffers[app.buffer_id().unwrap()]
+            .name()
+            .contains("user.rs"));
+        // Case is ignored when nothing matches exactly; hidden names need a dot.
+        press(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        typed(&mut app, "src/MA\t");
+        assert_eq!(text(&app), "src/main.rs");
+        assert!(workspace::complete_path(&root, "")
+            .iter()
+            .all(|p| !p.starts_with('.')));
+        assert_eq!(workspace::complete_path(&root, ".e"), vec![".env"]);
+        assert!(workspace::complete_path(&root, "nothing/").is_empty());
+        // Enter on a folder shows it, opened, in the explorer.
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+        typed(&mut app, "src/model\n");
+        let model = root.join("src/model");
+        assert!(app.sidebar_focus && !app.git_focus);
+        assert!(app.tree.expanded.contains(&model));
+        assert_eq!(app.tree.entries[app.tree.selected].path, model);
     }
     #[test]
     fn find_and_replace_like_vscode() {

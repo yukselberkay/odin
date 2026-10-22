@@ -1690,34 +1690,56 @@ impl App {
         self.sidebar_focus = false;
         self.mode = Mode::Normal;
     }
+    /// Ctrl-b arrows: the pane on that side of the focused one, like tmux. A pane
+    /// counts only when it lies wholly past that edge and shares some of the edge, so
+    /// a wide pane below is never "right"; among several, the nearest, then the one
+    /// level with the focused pane's middle.
     fn move_focus(&mut self, direction: KeyCode) {
-        let Some((_, current)) = self.rectangles.iter().find(|(id, _)| *id == self.focused) else {
+        let Some(&(_, current)) = self.rectangles.iter().find(|(id, _)| *id == self.focused) else {
             return;
         };
-        let x = current.x as i32 + current.width as i32 / 2;
-        let y = current.y as i32 + current.height as i32 / 2;
+        let span = |start: u16, size: u16| (start as i32, start as i32 + size as i32);
+        let (left, right) = span(current.x, current.width);
+        let (top, bottom) = span(current.y, current.height);
         let mut best = None;
-        for (id, rect) in &self.rectangles {
-            if *id == self.focused {
+        for &(id, rect) in &self.rectangles {
+            if id == self.focused {
                 continue;
             }
-            let dx = rect.x as i32 + rect.width as i32 / 2 - x;
-            let dy = rect.y as i32 + rect.height as i32 / 2 - y;
-            let valid = match direction {
-                KeyCode::Left => dx < 0,
-                KeyCode::Right => dx > 0,
-                KeyCode::Up => dy < 0,
-                _ => dy > 0,
+            let (x0, x1) = span(rect.x, rect.width);
+            let (y0, y1) = span(rect.y, rect.height);
+            // Distance past the edge, the shared stretch of edge, and how far the
+            // candidate's middle is from ours along that edge.
+            let (gap, low, high, middle, ours) = match direction {
+                KeyCode::Left => (
+                    left - x1,
+                    y0.max(top),
+                    y1.min(bottom),
+                    y0 + y1,
+                    top + bottom,
+                ),
+                KeyCode::Right => (
+                    x0 - right,
+                    y0.max(top),
+                    y1.min(bottom),
+                    y0 + y1,
+                    top + bottom,
+                ),
+                KeyCode::Up => (top - y1, x0.max(left), x1.min(right), x0 + x1, left + right),
+                _ => (
+                    y0 - bottom,
+                    x0.max(left),
+                    x1.min(right),
+                    x0 + x1,
+                    left + right,
+                ),
             };
-            if valid {
-                let score = if matches!(direction, KeyCode::Left | KeyCode::Right) {
-                    dx.abs() + 2 * dy.abs()
-                } else {
-                    2 * dx.abs() + dy.abs()
-                };
-                if best.is_none_or(|(_, s)| score < s) {
-                    best = Some((*id, score));
-                }
+            if gap < 0 || low >= high {
+                continue;
+            }
+            let score = (gap, (middle - ours).abs());
+            if best.is_none_or(|(_, s)| score < s) {
+                best = Some((id, score));
             }
         }
         if let Some((id, _)) = best {
@@ -3602,6 +3624,43 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
                 }
             }
         }
+    }
+    #[test]
+    fn arrows_move_only_to_panes_on_that_side() {
+        // Two panes on top, one full-width pane below.
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let top_left = app.focused;
+        app.split_editor(Axis::Vertical).unwrap();
+        let below = app.focused;
+        app.focused = top_left;
+        app.split_editor(Axis::Horizontal).unwrap();
+        let top_right = app.focused;
+        // A wide window: the old centre-to-centre rule picked the pane below for Right.
+        app.tiles
+            .rectangles(Rect::new(0, 0, 200, 30), &mut app.rectangles);
+        let mut go = |from, key| {
+            app.focused = from;
+            press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(&mut app, key, KeyModifiers::NONE);
+            app.focused
+        };
+        assert_eq!(
+            go(top_left, KeyCode::Right),
+            top_right,
+            "not the wide pane below"
+        );
+        assert_eq!(go(top_left, KeyCode::Down), below);
+        assert_eq!(go(top_right, KeyCode::Left), top_left);
+        assert_eq!(go(top_right, KeyCode::Down), below);
+        assert_eq!(
+            go(top_right, KeyCode::Right),
+            top_right,
+            "nothing further right"
+        );
+        assert_eq!(go(below, KeyCode::Right), below);
+        assert_eq!(go(below, KeyCode::Left), below);
+        assert!([top_left, top_right].contains(&go(below, KeyCode::Up)));
     }
     #[test]
     fn terminals_open_below_or_beside_the_active_pane() {

@@ -1927,6 +1927,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Ctrl-b a / A",
             "AI launcher beside / below (ai_split sets default)",
         ),
+        (
+            ":sound",
+            "Chime when an AI prompt finishes (ai_sound picks it)",
+        ),
         ("Ctrl-b z / x / s", "Zoom / close pane / toggle sidebar"),
         (
             "Ctrl-b + / - / 0",

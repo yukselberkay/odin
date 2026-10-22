@@ -50,7 +50,7 @@ in the order the user presses them. Prefer showing over explaining.
 | Search | `/text` Enter, then `n` / `N`. |
 | Undo / redo | `u` / `Ctrl-r` (NORMAL mode). |
 | Jump to a line | `:42` or `42G`. With relative numbers (`:set rnu`): `15j` / `15k`, or `15` Enter / `15-`, or `:+15` / `:-15`. |
-| Run an AI agent | **`Ctrl-b a`** (beside) or **`Ctrl-b A`** (below) → 1 Codex, 2 Claude Code, 3 Gemini CLI, 4 Antigravity (`agy`), 5 Local LLM, 6–9 your own. Or `:ai claude below`. Default placement: `ai_split = "below"`. |
+| Run an AI agent | **`Ctrl-b a`** (beside) or **`Ctrl-b A`** (below) → 1 Codex, 2 Claude Code, 3 Gemini CLI, 4 Antigravity (`agy`), 5 Local LLM, 6–9 your own. Or `:ai claude below`. Default placement: `ai_split = "below"`. A chime plays when an AI pane finishes a prompt or stops to ask something; change it with `ai_sound = "Hero"` (macOS sound name, a file, `"bell"`, `"off"`), test with `:sound`. |
 | Use a local LLM | Key 5 / `:ai local [model]`: runs `[ai.local]`, else Ollama (`ollama run`) or LM Studio. Add any tool as `[ai.<name>] program, args ({model}), model, env` → it appears on keys 6–9 and as `:ai <name>`. |
 | Code intelligence (LSP) | Automatic for Rust, Go, Python, C/C++ once the server is installed (`rust-analyzer`, `gopls`, `pyright-langserver`, `clangd`). **`K`** hover, **`gd`** definition (`Ctrl-o` back), **`Ctrl-Space`** completion, `]d` / `[d` problems, `:format`, `:lsp` status. |
 | Preview Markdown | `.md` files open rendered. `e` edits, **`Ctrl-b m`** toggles, **`Ctrl-b M`** live preview beside the source. |

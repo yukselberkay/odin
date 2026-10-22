@@ -29,6 +29,11 @@ ai_split = "right"
 # Teach your AI agents about Odin (an Agent Skills skill for every project; kept
 # current at startup when an AI agent is installed, and when you launch one).
 ai_skill = true
+# A sound when an AI pane finishes a prompt (or stops to ask you something):
+# "default" (macOS Glass, the desktop's "complete" sound on Linux), "off", "bell"
+# (the terminal's bell), a macOS sound name ("Hero", "Ping"…) or a sound file.
+# :sound plays it.
+ai_sound = "default"
 # shell = "/bin/zsh"
 
 # Language servers start automatically for Rust, Go, Python, C and C++ files.

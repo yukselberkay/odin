@@ -134,6 +134,9 @@ pub struct Config {
     pub ai_split: String,
     /// Install the Odin skill (interactive docs) for AI agents when one is launched.
     pub ai_skill: bool,
+    /// Sound when an AI pane finishes a prompt: "default", "off", "bell", a macOS
+    /// sound name ("Glass", "Hero"…) or a sound file (see `sound::play`).
+    pub ai_sound: String,
     /// Your own AI launchers: `[ai.<name>] program = "…" args = […] env = {…}`.
     /// `[ai.local]` is used by the launcher's "Local LLM" entry.
     pub ai: BTreeMap<String, crate::local_ai::Launcher>,
@@ -164,6 +167,7 @@ impl Default for Config {
             font_size: 14.0,
             ai_split: "right".into(),
             ai_skill: true,
+            ai_sound: "default".into(),
             ai: BTreeMap::new(),
             plugins: BTreeMap::new(),
             lsp_enabled: true,

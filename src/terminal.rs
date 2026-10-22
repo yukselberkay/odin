@@ -10,6 +10,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
+    time::{Duration, Instant},
 };
 
 /// What a terminal pane runs, so a restored session can start it again.
@@ -47,7 +48,29 @@ pub struct TerminalPane {
     output: Arc<AtomicBool>,
     /// Session snapshot (transcript, working directory), rebuilt only after output.
     saved: Option<(String, Option<std::path::PathBuf>)>,
+    /// An AI pane's prompt in flight, from Enter until the agent goes quiet.
+    turn: Option<Turn>,
+    /// When the last poll saw output.
+    last_output: Instant,
+    /// Bells the program has rung so far (some agents ring one when done).
+    bells: usize,
+    /// When the AI pane last finished; taken by [`finished`](Self::finished).
+    done: Option<Instant>,
+    finished: bool,
 }
+
+/// A prompt sent to an AI pane.
+struct Turn {
+    sent: Instant,
+    /// Output kept coming well after Enter: the agent is working, not just echoing.
+    working: bool,
+}
+
+/// Output this long after Enter means the agent is working on the prompt.
+const WORKING: Duration = Duration::from_millis(1500);
+/// Agents animate a spinner while they work; this long without output, they're done
+/// (or waiting for you).
+const QUIET: Duration = Duration::from_millis(2500);
 
 impl TerminalPane {
     pub fn spawn(
@@ -97,6 +120,7 @@ impl TerminalPane {
         // Earlier output (a restored session) goes in before the program starts.
         let mut screen = vt100::Parser::new(24, 80, SCROLLBACK);
         screen.process(history);
+        let bells = screen.screen().audible_bell_count();
         let parser = Arc::new(Mutex::new(screen));
         let dirty = Arc::new(AtomicBool::new(true));
         let output = Arc::new(AtomicBool::new(true));
@@ -154,6 +178,11 @@ impl TerminalPane {
             colors,
             output,
             saved: None,
+            turn: None,
+            last_output: Instant::now(),
+            bells,
+            done: None,
+            finished: false,
         })
     }
     /// Bring the session snapshot up to date; cheap when nothing was printed since.
@@ -237,6 +266,12 @@ impl TerminalPane {
         Ok(())
     }
     pub fn key(&mut self, key: KeyEvent) -> Result<()> {
+        if key.code == KeyCode::Enter && self.is_agent() {
+            self.turn = Some(Turn {
+                sent: Instant::now(),
+                working: false,
+            });
+        }
         if let Ok(mut parser) = self.parser.lock() {
             parser.set_scrollback(0);
         }
@@ -297,7 +332,56 @@ impl TerminalPane {
                 dirty = true;
             }
         }
+        if self.is_agent() {
+            self.watch_turn(dirty, Instant::now());
+        }
         dirty
+    }
+    fn is_agent(&self) -> bool {
+        matches!(self.launch, Launch::Agent { .. })
+    }
+    /// Whether an AI pane finished a prompt since the last call: it worked on it
+    /// (output kept coming after Enter, as agents animate a spinner) and then went
+    /// quiet, or it rang the bell. Stopping to ask you something counts too.
+    pub fn finished(&mut self) -> bool {
+        std::mem::take(&mut self.finished)
+    }
+    fn watch_turn(&mut self, output: bool, now: Instant) {
+        if output {
+            self.last_output = now;
+        }
+        // A resize rebuilds the parser, and its bell count with it.
+        let bells = self
+            .parser
+            .lock()
+            .map(|p| p.screen().audible_bell_count())
+            .unwrap_or(0);
+        let rang = bells > self.bells;
+        self.bells = bells;
+        let quiet = now.duration_since(self.last_output) >= QUIET;
+        let finished = match &mut self.turn {
+            Some(turn) => {
+                if output && now.duration_since(turn.sent) >= WORKING {
+                    turn.working = true;
+                }
+                if !turn.working && quiet && now.duration_since(turn.sent) >= WORKING {
+                    // Answered at once (a slash command): nothing to wait for.
+                    self.turn = None;
+                }
+                rang || self.turn.as_ref().is_some_and(|t| t.working && quiet)
+            }
+            // A bell on its own, unless it's the agent's own "done" right after ours.
+            None => {
+                rang && self
+                    .done
+                    .is_none_or(|at| now.duration_since(at) >= QUIET * 2)
+            }
+        };
+        if finished {
+            self.turn = None;
+            self.done = Some(now);
+            self.finished = true;
+        }
     }
 }
 
@@ -693,6 +777,72 @@ mod tests {
         assert_eq!(parser.screen().size(), (5, 20));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ai_panes_finish_when_they_go_quiet_after_working_or_ring() {
+        let spawn = |history: &[u8]| {
+            let mut pane = TerminalPane::spawn(
+                "/bin/sh",
+                &["-c".into(), "exec sleep 30".into()],
+                &[],
+                Path::new("/tmp"),
+                "claude",
+                &Theme::default(),
+                history,
+            )
+            .unwrap();
+            pane.launch = Launch::Agent {
+                name: "claude".into(),
+                model: None,
+                session: None,
+            };
+            pane
+        };
+        let ms = Duration::from_millis;
+        let mut pane = spawn(b"");
+        let start = Instant::now();
+        let at = |n| start + ms(n);
+        // A prompt the agent works on: output keeps coming, then stops.
+        pane.turn = Some(Turn {
+            sent: start,
+            working: false,
+        });
+        for n in (0..=4000).step_by(100) {
+            pane.watch_turn(true, at(n));
+        }
+        pane.watch_turn(false, at(5000));
+        assert!(!pane.finished(), "still inside the quiet period");
+        pane.watch_turn(false, at(6600));
+        assert!(pane.finished(), "worked, then quiet");
+        assert!(!pane.finished(), "reported once");
+        assert!(pane.turn.is_none());
+        // Answered at once (a slash command, the echo of Enter): no sound.
+        pane.turn = Some(Turn {
+            sent: at(10_000),
+            working: false,
+        });
+        pane.watch_turn(true, at(10_050));
+        pane.watch_turn(false, at(13_000));
+        pane.watch_turn(false, at(20_000));
+        assert!(!pane.finished());
+        assert!(pane.turn.is_none());
+        // Output without a prompt (a resize redraw) is not a finished prompt.
+        pane.watch_turn(true, at(30_000));
+        pane.watch_turn(false, at(40_000));
+        assert!(!pane.finished());
+        // An agent that rings the bell when it's done.
+        pane.parser.lock().unwrap().process(b"\x07");
+        pane.watch_turn(true, at(50_000));
+        assert!(pane.finished(), "a bell finishes too");
+        // Bells already in a restored session don't ring again; shells never ring.
+        let mut restored = spawn(b"old\x07output");
+        restored.watch_turn(true, Instant::now());
+        assert!(!restored.finished());
+        restored.launch = Launch::Shell;
+        restored.parser.lock().unwrap().process(b"\x07");
+        restored.poll();
+        assert!(!restored.finished());
+    }
     #[cfg(unix)]
     #[test]
     fn real_pty_receives_input_and_resizes() {

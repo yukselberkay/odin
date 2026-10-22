@@ -17,6 +17,7 @@ mod quickdiff;
 mod remote;
 mod session;
 mod skill;
+mod sound;
 mod terminal;
 mod textsize;
 mod ui;

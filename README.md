@@ -856,6 +856,14 @@ Install the desired CLI separately using its official instructions:
 (`:ai claude below`), or set the default with `ai_split = "below"` in config.toml.
 A missing CLI is reported with its install command.
 
+**Done sound:** when an AI pane finishes a prompt, or stops to ask you something,
+Odin plays a short chime (macOS Glass; the desktop's "complete" sound on Linux) and,
+if you're in another pane, names the pane in the status line. Odin hears the agent
+working (its spinner keeps drawing after you press Enter) and then going quiet, or
+the agent ringing the terminal bell, so it works with every CLI and needs no setup.
+Pick another sound with `ai_sound` (`"Hero"`, `"Ping"`, a file, `"bell"`, or `"off"`);
+`:sound` plays it.
+
 ### Bring your own model (local LLMs)
 
 Any AI tool or local model becomes a launcher entry with a few lines in
@@ -1008,6 +1016,7 @@ theme immediately. The configuration supports:
 | `restore_session` | `true` | Save each project's panes, buffers and terminals to `.odin/` and reopen them |
 | `[ai.name]` | None | Your own AI launcher: `program`, `args` (`{model}`), `model`, `env`; `[ai.local]` backs the Local LLM entry |
 | `ai_split` | `"right"` | Where AI panes open: `"right"` (side by side) or `"below"` (stacked) |
+| `ai_sound` | `"default"` | Sound when an AI pane finishes a prompt: `"default"`, `"off"`, `"bell"`, a macOS sound name (`"Hero"`) or a sound file; `:sound` plays it |
 | `format_on_save` | `["go"]` | Languages whose files get imports organized and formatting from their server on save ([Go: tidy on save](#go-tidy-on-save)) |
 | `ai_skill` | `true` | Keep the [Odin skill](#ask-your-ai-agent-about-odin) installed for the AI agents on this machine (at startup and when you launch one) |
 | `shell` | `$SHELL`, then `/bin/sh` | Executable path for interactive terminal panes |

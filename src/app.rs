@@ -10,6 +10,7 @@ use crate::{
     markdown::{self, Previews},
     quickdiff,
     session::{self, SavedBuffer, SavedPane, Session},
+    sound,
     terminal::{Launch, TerminalPane},
     textsize,
     workspace::{self, FileTree, GitInfo},
@@ -1052,11 +1053,23 @@ impl App {
         for event in events {
             self.lsp_event(event);
         }
-        for pane in self.panes.values_mut() {
+        let mut finished = None;
+        for (id, pane) in self.panes.iter_mut() {
             match pane {
-                Pane::Terminal(terminal) => self.redraw |= terminal.poll(),
+                Pane::Terminal(terminal) => {
+                    self.redraw |= terminal.poll();
+                    if terminal.finished() {
+                        finished = Some((*id, terminal.title.clone()));
+                    }
+                }
                 Pane::Git(view) => self.redraw |= view.poll(),
                 _ => {}
+            }
+        }
+        if let Some((id, title)) = finished {
+            sound::play(&self.config.ai_sound);
+            if id != self.focused {
+                self.notice(format!("{title} finished · Ctrl-b arrows to go there"));
             }
         }
         let asks: Vec<_> = self
@@ -2985,6 +2998,13 @@ impl App {
                 self.notice("Explorer: selected folder expanded, with everything inside");
             }
             // :zoom in / out / reset changes the text size; bare :zoom maximizes the pane.
+            "sound" => {
+                sound::play(&self.config.ai_sound);
+                self.notice(format!(
+                    "ai_sound = \"{}\" plays when an AI pane finishes a prompt",
+                    self.config.ai_sound
+                ));
+            }
             "zoom" => match (arg, textsize::Step::parse(arg)) {
                 ("", _) => {
                     self.zoom = !self.zoom;
@@ -4246,6 +4266,43 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         press(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
         assert!(app.copy_view.is_none());
         assert!(screen(&mut app, 100, 24).join("\n").contains("EXPLORER"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_finished_ai_prompt_is_announced() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let editor = app.focused;
+        // A fake agent: waits for a prompt, shows a spinner for 2 s, answers.
+        let script = "read prompt; i=0; while [ $i -lt 20 ]; do printf .; sleep 0.1; \
+                      i=$((i+1)); done; echo answer; exec sleep 30";
+        app.open_terminal(
+            Some(("/bin/sh", vec!["-c".into(), script.into()])),
+            Some(Axis::Horizontal),
+        )
+        .unwrap();
+        let agent = app.focused;
+        let Some(Pane::Terminal(t)) = app.panes.get_mut(&agent) else {
+            unreachable!()
+        };
+        t.launch = Launch::Agent {
+            name: "fake".into(),
+            model: None,
+            session: None,
+        };
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        app.focused = editor;
+        let start = Instant::now();
+        while !app.message.contains("finished") && start.elapsed() < Duration::from_secs(10) {
+            app.tick();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(app.message.contains("finished"), "{}", app.message);
+        assert!(
+            start.elapsed() >= Duration::from_secs(4),
+            "not before it went quiet"
+        );
     }
 
     #[cfg(unix)]

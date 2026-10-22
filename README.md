@@ -637,12 +637,19 @@ come from the theme's terminal palette (bright green, blue and red).
 
 ### Editor: insert mode
 
-Type normally. Enter adds a line with the current indentation; Tab inserts spaces
-using `tab_width`. Backspace/Delete, arrows, Home/End and PageUp/PageDown work.
-Escape returns to normal mode. `Ctrl-s` saves without leaving insert mode.
-`Ctrl-Space` asks the language server for completions (they also pop up after `.`):
-Up/Down or `Ctrl-n`/`Ctrl-p` choose, Tab or Enter accepts, Escape closes the list,
-and typing keeps filtering it.
+Type normally. Enter indents for the language ([Language-aware
+typing](#language-aware-typing)); Tab indents. Backspace/Delete, arrows, Home/End and
+PageUp/PageDown work. Escape returns to normal mode. `Ctrl-s` saves without leaving
+insert mode.
+
+**Autocomplete:** after two letters of a word, suggestions pop up: the language
+server's (Rust, Go, Python, C/C++, when installed), or else the language's keywords
+and the words already in your open files of that language, most used first. They
+also pop up after `.`, and `Ctrl-Space` asks any time. Up/Down or `Ctrl-n`/`Ctrl-p`
+choose, **Tab** accepts, Escape closes the list, and typing keeps filtering it. Enter
+accepts a suggestion you picked with Up/Down (or one you asked for); otherwise it
+starts a new line, so a list that popped up never eats a newline.
+`autocomplete = false` keeps it to `Ctrl-Space` and `.`.
 
 Mac-style moves work in insert and normal mode, as far as your terminal passes the
 keys on (`odin --keys` shows what arrives; a key that prints nothing never reaches
@@ -751,7 +758,7 @@ the project root, and talks to it in the background. Install the server once:
 | Diagnostics | A `●` in the gutter, underlined code, and the message at the bottom of the pane when the cursor is on that line; `]d` / `[d` jump between them |
 | Hover | `K` shows types and docs in a popup; any key closes it |
 | Go to definition | `gd` opens the definition (even in another file); `Ctrl-o` jumps back |
-| Completion | `Ctrl-Space` in insert mode, or automatically after `.` |
+| Completion | Pops up after two letters or `.`; `Ctrl-Space` asks; keywords and words from your files without a server |
 | Format | `:format` formats the file with the server's formatter (rustfmt, gofmt, clang-format…) |
 | Tidy on save | Go files are tidied every time you save, as in VS Code: [details below](#go-tidy-on-save) |
 | Status | The pane footer names the server and counts errors/warnings; `:lsp` lists every language; `:lsp restart` restarts them |
@@ -1128,6 +1135,7 @@ theme immediately. The configuration supports:
 | `tab_width` | `4` | Indentation width when a file and its language don't decide it, clamped to 1–16 |
 | `smart_indent` | `true` | [Language-aware](#language-aware-typing) Enter, `o`, Tab/Shift-Tab and closers |
 | `auto_pairs` | `true` | Brackets and quotes close themselves; typing the closer steps over it |
+| `autocomplete` | `true` | Suggestions pop up after two letters of a word (language server, else keywords and words from your files) |
 | `relative_numbers` | `false` | Relative line numbers except the current line; type the shown number, then `j`/Enter (down) or `k`/`-` (up) |
 | `icons` | `true` | Explorer file-type icons: `true` picks Nerd Font glyphs when a Nerd Font is available, else colored markers; `"nerd"`/`"basic"` force one; `false` for none |
 | `git_pane` | `false` | Open the Git pane (branches, commit graph, details) at startup |

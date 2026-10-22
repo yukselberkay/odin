@@ -2466,7 +2466,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ),
         (
             "Ctrl-Space / ]d [d / :format",
-            "Complete (also after .) / next-prev problem / format",
+            "Complete (pops up by itself; Tab takes it) / problems / format",
         ),
         (
             "]c / [c",

@@ -118,6 +118,9 @@ pub struct Config {
     pub smart_indent: bool,
     /// Brackets and quotes close themselves; typing the closer steps over it.
     pub auto_pairs: bool,
+    /// Completions pop up after two letters of a word: the language server's, or
+    /// keywords and words from your open files when there is none.
+    pub autocomplete: bool,
     pub shell: Option<String>,
     pub relative_numbers: bool,
     /// File-type icons in the explorer: `true` (auto), `"nerd"`, `"basic"` or `false`.
@@ -167,6 +170,7 @@ impl Default for Config {
             tab_width: 4,
             smart_indent: true,
             auto_pairs: true,
+            autocomplete: true,
             shell: None,
             relative_numbers: false,
             icons: Icons::Auto,

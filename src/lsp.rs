@@ -52,6 +52,16 @@ pub struct Completion {
 }
 
 impl Completion {
+    /// A suggestion that isn't from a server: a keyword, or a word from your files.
+    pub fn word(label: &str, detail: &str) -> Self {
+        Self {
+            label: label.into(),
+            detail: detail.into(),
+            insert: label.into(),
+            start: None,
+            filter: label.into(),
+        }
+    }
     pub fn matches(&self, prefix: &str) -> bool {
         let prefix = prefix.to_lowercase();
         self.filter.to_lowercase().starts_with(&prefix)
@@ -575,6 +585,16 @@ impl Lsp {
                 json!({ "textDocument": { "uri": uri } }),
             );
         }
+    }
+
+    /// Whether a running server has this buffer open, so it can answer completions.
+    pub fn ready(&self, id: usize) -> bool {
+        self.enabled
+            && self
+                .docs
+                .get(&id)
+                .and_then(|d| self.clients.get(d.key))
+                .is_some_and(|client| client.ready)
     }
 
     /// Whether typing `c` should pop up completions (a server trigger character).

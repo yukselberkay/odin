@@ -142,6 +142,10 @@ pub struct Menu {
     pub row: usize,
     /// Column where the word being completed starts.
     pub start: usize,
+    /// It popped up while typing; Enter takes a suggestion only once you've
+    /// picked one with ↑↓ (Tab always does).
+    pub auto: bool,
+    pub picked: bool,
 }
 
 /// How to start an AI CLI pane.
@@ -318,6 +322,9 @@ pub struct App {
     pub explorer_search: Option<search::Search>,
     /// The result shown on each row of that list, for clicks.
     pub search_lines: Vec<Option<usize>>,
+    /// The word (buffer, row, start column) completions were last asked for while
+    /// typing, so each word asks the language server once.
+    asked: Option<(usize, usize, usize)>,
 }
 
 impl App {
@@ -397,6 +404,7 @@ impl App {
             dock_tabs: Vec::new(),
             explorer_search: None,
             search_lines: Vec::new(),
+            asked: None,
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -2619,10 +2627,20 @@ impl App {
                     self.menu_move(1);
                     return Ok(());
                 }
-                KeyCode::Tab | KeyCode::Enter => {
+                KeyCode::Tab => {
                     self.menu_accept();
                     return Ok(());
                 }
+                // Enter takes the suggestion, unless it popped up by itself and none
+                // was picked, or the word is already typed out: then it's a new line.
+                KeyCode::Enter
+                    if !self.menu_typed_out()
+                        && self.menu.as_ref().is_some_and(|m| !m.auto || m.picked) =>
+                {
+                    self.menu_accept();
+                    return Ok(());
+                }
+                KeyCode::Enter => self.menu = None,
                 KeyCode::Esc => {
                     self.menu = None;
                     return Ok(());
@@ -2631,7 +2649,14 @@ impl App {
             }
         }
         if ctrl && matches!(key.code, KeyCode::Char(' ') | KeyCode::Char('@')) {
-            return self.lsp_request(lsp::Kind::Completion);
+            let ready = self.buffer_id().is_some_and(|id| self.lsp.ready(id));
+            if ready {
+                return self.lsp_request(lsp::Kind::Completion);
+            }
+            if !self.suggest_words(true, false) {
+                self.notice("No completions");
+            }
+            return Ok(());
         }
         let typed = match key.code {
             KeyCode::Char(c) if !ctrl => Some(c),
@@ -2644,9 +2669,92 @@ impl App {
         if let (Some(c), Some(id)) = (typed, self.buffer_id()) {
             if self.menu.is_none() && self.lsp.is_trigger(id, c) {
                 let _ = self.lsp_request(lsp::Kind::Completion);
+            } else if self.menu.is_none() && self.config.autocomplete && is_word(c) {
+                self.autocomplete(id);
             }
         }
         Ok(())
+    }
+    /// The word being typed before the cursor: (start column, text).
+    fn typed_word(&self, id: usize) -> (usize, String) {
+        let b = &self.buffers[id];
+        let line: Vec<char> = b.line(b.row).chars().collect();
+        let col = b.col.min(line.len());
+        let mut start = col;
+        while start > 0 && is_word(line[start - 1]) {
+            start -= 1;
+        }
+        (start, line[start..col].iter().collect())
+    }
+    /// After two letters of a word: ask the language server once for this word, or
+    /// without one, suggest keywords and words from your files.
+    fn autocomplete(&mut self, id: usize) {
+        let (start, word) = self.typed_word(id);
+        if word.chars().count() < 2 || word.starts_with(|c: char| c.is_ascii_digit()) {
+            return;
+        }
+        if self.lsp.ready(id) {
+            let here = (id, self.buffers[id].row, start);
+            if self.asked != Some(here) {
+                self.asked = Some(here);
+                let _ = self.lsp_request(lsp::Kind::Completion);
+            }
+            return;
+        }
+        self.suggest_words(false, true);
+    }
+    /// Keywords and words from the open files of this language that start with the
+    /// word being typed. False when there are none.
+    fn suggest_words(&mut self, any_length: bool, auto: bool) -> bool {
+        let Some(id) = self.buffer_id() else {
+            return false;
+        };
+        let (start, word) = self.typed_word(id);
+        if word.is_empty() && !any_length {
+            return false;
+        }
+        let lang = language::Lang::detect(self.buffers[id].path.as_deref());
+        let texts: Vec<String> = self
+            .buffers
+            .iter()
+            .filter(|b| language::Lang::detect(b.path.as_deref()) == lang)
+            .map(|b| b.text.slice(..b.text.len_chars().min(400_000)).to_string())
+            .collect();
+        let items: Vec<lsp::Completion> = language::suggestions(lang, &texts, &word)
+            .into_iter()
+            .map(|(label, detail)| lsp::Completion::word(&label, detail))
+            .collect();
+        if items.is_empty() {
+            return false;
+        }
+        self.menu = Some(Menu {
+            shown: (0..items.len()).collect(),
+            items,
+            selected: 0,
+            buffer: id,
+            row: self.buffers[id].row,
+            start,
+            auto,
+            picked: false,
+        });
+        self.menu_filter();
+        self.menu.is_some()
+    }
+    /// Whether the selected suggestion is exactly what's already typed.
+    fn menu_typed_out(&self) -> bool {
+        let Some(menu) = &self.menu else {
+            return false;
+        };
+        let b = &self.buffers[menu.buffer];
+        let typed: String = b
+            .line(menu.row)
+            .chars()
+            .skip(menu.start)
+            .take(b.col.saturating_sub(menu.start))
+            .collect();
+        menu.shown
+            .get(menu.selected)
+            .is_some_and(|&i| menu.items[i].insert == typed)
     }
     fn insert_edit(&mut self, key: KeyEvent) -> Result<()> {
         let width = self.config.tab_width;
@@ -2942,7 +3050,13 @@ impl App {
                     return;
                 }
                 if items.is_empty() {
-                    return self.notice("No completions");
+                    // Nothing from the server: words from your files, quietly when
+                    // it was asked for while typing.
+                    let typing = self.asked.is_some_and(|(b, r, _)| b == buffer && r == row);
+                    if !self.suggest_words(false, typing) && !typing {
+                        self.notice("No completions");
+                    }
+                    return;
                 }
                 let line: Vec<char> = b.line(row).chars().collect();
                 let mut start = b.col.min(line.len());
@@ -2956,6 +3070,8 @@ impl App {
                     buffer,
                     row,
                     start,
+                    auto: self.asked == Some((buffer, row, start)),
+                    picked: false,
                 });
                 self.menu_filter();
             }
@@ -3008,6 +3124,7 @@ impl App {
     }
     fn menu_move(&mut self, delta: isize) {
         if let Some(menu) = &mut self.menu {
+            menu.picked = true;
             let len = menu.shown.len() as isize;
             menu.selected = (menu.selected as isize + delta).rem_euclid(len) as usize;
         }
@@ -4018,6 +4135,11 @@ fn word_at(b: &Buffer) -> Option<(String, usize)> {
     Some((text, b.text.line_to_char(b.row) + start))
 }
 
+/// Letters, digits and `_`: what identifiers are made of.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 /// Word-wise arrows: Option+←/→ on a Mac (Terminal.app and Ghostty send them as
 /// Esc b / Esc f, which arrive as Alt+b / Alt+f), Alt+←/→, and Ctrl+←/→ on Linux
 /// and Windows. Returns (backwards, extend the selection).
@@ -4294,6 +4416,55 @@ mod tests {
         assert!(screen(&mut app, 120, 30).join("\n").contains("EXPLORER"));
     }
     #[test]
+    fn suggestions_pop_up_while_typing_without_a_language_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.js");
+        std::fs::write(&path, "const totalCount = 1;\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        let keys = |app: &mut App, text: &str| {
+            for c in text.chars() {
+                let code = if c == '\n' {
+                    KeyCode::Enter
+                } else {
+                    KeyCode::Char(c)
+                };
+                press(app, code, KeyModifiers::NONE);
+            }
+        };
+        let labels = |app: &App| -> Vec<String> {
+            app.menu
+                .as_ref()
+                .map(|m| m.shown.iter().map(|&i| m.items[i].label.clone()).collect())
+                .unwrap_or_default()
+        };
+        press(&mut app, KeyCode::Char('G'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('o'), KeyModifiers::NONE);
+        keys(&mut app, "t");
+        assert!(app.menu.is_none(), "one letter is not enough");
+        keys(&mut app, "o");
+        assert_eq!(labels(&app), vec!["totalCount"]);
+        let shown = screen(&mut app, 100, 20).join("\n");
+        assert!(shown.contains("totalCount"), "{shown}");
+        // Enter is a new line until a suggestion is picked; Tab takes it.
+        keys(&mut app, "\nto");
+        assert!(app.buffers[id].text.to_string().contains("\nto\nto"));
+        press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert!(app.buffers[id].text.to_string().ends_with("\ntotalCount"));
+        // Keywords too; ↓ picks one, and then Enter takes it.
+        keys(&mut app, "\nfun");
+        assert_eq!(labels(&app), vec!["function"]);
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(app.buffers[id].text.to_string().ends_with("\nfunction"));
+        // autocomplete = false: nothing pops up, Ctrl-Space still asks.
+        app.config.autocomplete = false;
+        keys(&mut app, " tot");
+        assert!(app.menu.is_none());
+        press(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+        assert_eq!(labels(&app), vec!["totalCount"]);
+    }
+    #[test]
     fn find_and_replace_like_vscode() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.js");
@@ -4479,6 +4650,16 @@ mod tests {
         app.command("format").unwrap();
         settle(&mut app, &|a| a.message.starts_with("Formatted"));
         assert_eq!(app.active_buffer().unwrap().line(0), "pub fn main() {");
+        // Two letters of a word ask the server by themselves, once per word.
+        press(&mut app, KeyCode::Char('o'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('p'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
+        settle(&mut app, &|a| a.menu.is_some());
+        let menu = app.menu.as_ref().unwrap();
+        assert!(menu.auto && menu.shown.len() == 2);
+        press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(app.active_buffer().unwrap().line(2).trim(), "print");
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
         app.command("lsp").unwrap();
         assert!(app.message.contains("python3 ready"), "{}", app.message);
     }

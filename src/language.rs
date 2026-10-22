@@ -94,6 +94,371 @@ impl Lang {
     }
 }
 
+impl Lang {
+    /// The language's keywords and common built-ins, for completion without a
+    /// language server.
+    pub fn keywords(self) -> &'static [&'static str] {
+        match self {
+            Self::Python => &[
+                "False",
+                "None",
+                "True",
+                "and",
+                "as",
+                "assert",
+                "async",
+                "await",
+                "break",
+                "class",
+                "continue",
+                "def",
+                "del",
+                "elif",
+                "else",
+                "except",
+                "finally",
+                "for",
+                "from",
+                "global",
+                "import",
+                "lambda",
+                "nonlocal",
+                "not",
+                "pass",
+                "raise",
+                "return",
+                "try",
+                "while",
+                "with",
+                "yield",
+                "print",
+                "range",
+                "len",
+                "self",
+                "isinstance",
+                "enumerate",
+                "dict",
+                "list",
+                "str",
+                "int",
+                "float",
+                "bool",
+                "tuple",
+                "set",
+                "open",
+                "super",
+                "__init__",
+                "__name__",
+                "__main__",
+            ],
+            Self::Rust => &[
+                "as", "async", "await", "break", "const", "continue", "crate", "else", "enum",
+                "extern", "false", "for", "impl", "in", "let", "loop", "match", "mod", "move",
+                "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+                "trait", "true", "type", "unsafe", "use", "where", "while", "Option", "Some",
+                "None", "Result", "Ok", "Err", "String", "Vec", "Box", "println", "format",
+                "derive", "Default", "Clone", "Debug",
+            ],
+            Self::Go => &[
+                "break",
+                "case",
+                "chan",
+                "const",
+                "continue",
+                "default",
+                "defer",
+                "else",
+                "fallthrough",
+                "for",
+                "func",
+                "go",
+                "goto",
+                "if",
+                "import",
+                "interface",
+                "map",
+                "package",
+                "range",
+                "return",
+                "select",
+                "struct",
+                "switch",
+                "type",
+                "var",
+                "nil",
+                "true",
+                "false",
+                "string",
+                "int",
+                "int64",
+                "float64",
+                "bool",
+                "byte",
+                "error",
+                "make",
+                "len",
+                "append",
+                "fmt",
+                "Println",
+                "Printf",
+                "Errorf",
+            ],
+            Self::C => &[
+                "auto",
+                "break",
+                "case",
+                "char",
+                "const",
+                "continue",
+                "default",
+                "do",
+                "double",
+                "else",
+                "enum",
+                "extern",
+                "float",
+                "for",
+                "goto",
+                "if",
+                "include",
+                "define",
+                "ifdef",
+                "ifndef",
+                "endif",
+                "int",
+                "long",
+                "register",
+                "return",
+                "short",
+                "signed",
+                "sizeof",
+                "static",
+                "struct",
+                "switch",
+                "typedef",
+                "union",
+                "unsigned",
+                "void",
+                "volatile",
+                "while",
+                "NULL",
+                "printf",
+                "malloc",
+                "free",
+                "class",
+                "namespace",
+                "public",
+                "private",
+                "protected",
+                "template",
+                "typename",
+                "virtual",
+                "nullptr",
+                "std",
+                "bool",
+                "true",
+                "false",
+            ],
+            Self::Js => &[
+                "async",
+                "await",
+                "break",
+                "case",
+                "catch",
+                "class",
+                "const",
+                "continue",
+                "debugger",
+                "default",
+                "delete",
+                "do",
+                "else",
+                "export",
+                "extends",
+                "false",
+                "finally",
+                "for",
+                "function",
+                "if",
+                "import",
+                "in",
+                "instanceof",
+                "let",
+                "new",
+                "null",
+                "return",
+                "super",
+                "switch",
+                "this",
+                "throw",
+                "true",
+                "try",
+                "typeof",
+                "undefined",
+                "var",
+                "void",
+                "while",
+                "yield",
+                "console",
+                "interface",
+                "type",
+                "readonly",
+                "string",
+                "number",
+                "boolean",
+                "Promise",
+                "Array",
+                "Object",
+            ],
+            Self::Brace => &[
+                "abstract",
+                "boolean",
+                "break",
+                "case",
+                "catch",
+                "class",
+                "const",
+                "continue",
+                "default",
+                "do",
+                "else",
+                "enum",
+                "extends",
+                "false",
+                "final",
+                "finally",
+                "for",
+                "fun",
+                "func",
+                "if",
+                "implements",
+                "import",
+                "interface",
+                "let",
+                "new",
+                "null",
+                "override",
+                "package",
+                "private",
+                "protected",
+                "public",
+                "return",
+                "static",
+                "string",
+                "super",
+                "switch",
+                "this",
+                "throw",
+                "true",
+                "try",
+                "val",
+                "var",
+                "void",
+                "while",
+            ],
+            Self::Shell => &[
+                "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function",
+                "if", "in", "local", "readonly", "return", "then", "until", "while", "echo",
+                "printf", "exit", "shift", "source",
+            ],
+            Self::Lua => &[
+                "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto",
+                "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
+                "until", "while", "print", "require", "pairs", "ipairs", "table",
+            ],
+            Self::Ruby => &[
+                "alias",
+                "and",
+                "begin",
+                "break",
+                "case",
+                "class",
+                "def",
+                "defined?",
+                "do",
+                "else",
+                "elsif",
+                "end",
+                "ensure",
+                "false",
+                "for",
+                "if",
+                "in",
+                "module",
+                "next",
+                "nil",
+                "not",
+                "or",
+                "redo",
+                "rescue",
+                "retry",
+                "return",
+                "self",
+                "super",
+                "then",
+                "true",
+                "undef",
+                "unless",
+                "until",
+                "when",
+                "while",
+                "yield",
+                "puts",
+                "require",
+                "attr_accessor",
+            ],
+            Self::Yaml | Self::Toml => &["true", "false", "null"],
+            Self::Markdown | Self::Make | Self::Plain => &[],
+        }
+    }
+}
+
+/// Completions without a language server: the language's keywords and the words
+/// in `texts` (your open files of that language) that start with `prefix` (case
+/// ignored), the most used first, keywords before words.
+pub fn suggestions(lang: Lang, texts: &[String], prefix: &str) -> Vec<(String, &'static str)> {
+    use std::collections::HashMap;
+    let lower = prefix.to_lowercase();
+    let fits = |word: &str| word != prefix && word.to_lowercase().starts_with(&lower);
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for text in texts {
+        for word in text
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .filter(|w| w.chars().count() >= 3 && !w.starts_with(|c: char| c.is_ascii_digit()))
+        {
+            *counts.entry(word).or_default() += 1;
+        }
+    }
+    // The word being typed counts once in the text; it isn't a suggestion.
+    if let Some(n) = counts.get_mut(prefix) {
+        *n = n.saturating_sub(1);
+    }
+    let keywords = lang.keywords();
+    let mut out: Vec<(String, &'static str)> = keywords
+        .iter()
+        .filter(|k| fits(k))
+        .map(|k| (k.to_string(), "keyword"))
+        .collect();
+    let mut words: Vec<(&str, usize)> = counts
+        .into_iter()
+        .filter(|(w, n)| *n > 0 && fits(w) && !keywords.contains(w))
+        .collect();
+    words.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.len().cmp(&b.0.len()))
+            .then(a.0.cmp(b.0))
+    });
+    out.extend(
+        words
+            .into_iter()
+            .take(40)
+            .map(|(w, _)| (w.to_string(), "word")),
+    );
+    // Exact-case matches first.
+    out.sort_by_key(|(w, _)| !w.starts_with(prefix));
+    out
+}
+
 /// The rules for one buffer: its language and one level of indentation.
 pub struct Rules {
     pub lang: Lang,
@@ -703,6 +1068,25 @@ mod tests {
             b.text.to_string(),
             "- one\n- two\n\n1. a\n2. b\n- [x] done\n- [ ] "
         );
+    }
+
+    #[test]
+    fn suggestions_come_from_keywords_and_your_words() {
+        let texts =
+            vec!["total_count = 1\ntotal_count += 2\ntotals = []\ntoken = 0\nto".to_string()];
+        let found = suggestions(Lang::Python, &texts, "to");
+        let words: Vec<&str> = found.iter().map(|(w, _)| w.as_str()).collect();
+        assert_eq!(
+            words,
+            vec!["total_count", "token", "totals"],
+            "most used, then shortest"
+        );
+        let found = suggestions(Lang::Python, &[], "ret");
+        assert_eq!(found, vec![("return".to_string(), "keyword")]);
+        // Case is ignored, but exact-case matches come first.
+        let found = suggestions(Lang::Python, &["Total total".into()], "tot");
+        assert_eq!(found[0].0, "total");
+        assert!(suggestions(Lang::Plain, &[], "zz").is_empty());
     }
 
     #[test]

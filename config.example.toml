@@ -12,6 +12,9 @@ tab_width = 4
 smart_indent = true
 # Brackets and quotes close themselves; typing the closer steps over it.
 auto_pairs = true
+# Suggestions pop up after two letters of a word: the language server's, or the
+# language's keywords and words from your open files. Tab accepts.
+autocomplete = true
 relative_numbers = false
 # File-type icons in the explorer. true: Nerd Font glyphs when a Nerd Font is
 # available (Omarchy has one), else colored markers. "nerd"/"basic" force a style;

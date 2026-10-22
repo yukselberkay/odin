@@ -306,6 +306,13 @@ pub struct App {
     pub explorer_rows: Rect,
     pub git_area: Rect,
     pub help_area: Rect,
+    /// Docked panes (Ctrl-b d), oldest first: still running and still in the
+    /// layout, just not drawn, so they come back to the same place and size.
+    pub docked: Vec<usize>,
+    /// The dock list (Ctrl-b D) is open, with this entry selected.
+    pub dock_list: Option<usize>,
+    /// Where each docked pane's tab was drawn in the top bar, for clicks.
+    pub dock_tabs: Vec<(usize, Rect)>,
 }
 
 impl App {
@@ -380,6 +387,9 @@ impl App {
             explorer_rows: Rect::default(),
             git_area: Rect::default(),
             help_area: Rect::default(),
+            docked: Vec::new(),
+            dock_list: None,
+            dock_tabs: Vec::new(),
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -596,7 +606,12 @@ impl App {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         let document = |p: &Pane| matches!(p, Pane::Editor(_) | Pane::Preview(_));
         // Browsing only fills an existing editor pane; it never creates one.
-        if peek && !self.panes.values().any(document) {
+        if peek
+            && !self
+                .panes
+                .iter()
+                .any(|(id, p)| self.tiles.contains(*id) && document(p))
+        {
             return Ok(());
         }
         let existing = self
@@ -636,7 +651,11 @@ impl App {
         let document = |p: &Pane| matches!(p, Pane::Editor(_) | Pane::Preview(_));
         if self.panes.get(&self.focused).is_some_and(document) {
             self.panes.insert(self.focused, pane());
-        } else if let Some((&pane_id, _)) = self.panes.iter().find(|(_, p)| document(p)) {
+        } else if let Some((&pane_id, _)) = self
+            .panes
+            .iter()
+            .find(|(id, p)| self.tiles.contains(**id) && document(p))
+        {
             self.focused = pane_id;
             self.panes.insert(pane_id, pane());
         } else {
@@ -723,15 +742,25 @@ impl App {
                 bail!("Unsaved changes. :w to save, :q! to discard this view.");
             }
         }
-        if self.panes.len() == 1 {
-            self.quit(force)?;
+        let closing = self.focused;
+        if self.visible().len() == 1 {
+            // The last pane on screen: a docked one takes its place, else Odin quits.
+            let Some(next) = self.docked.pop() else {
+                self.quit(force)?;
+                return Ok(());
+            };
+            self.tiles.remove(closing);
+            self.panes.remove(&closing);
+            self.focused = next;
+            self.zoom = false;
+            self.mode = Mode::Normal;
+            self.notice("Pane closed · a docked pane came back");
             return Ok(());
         }
-        let closing = self.focused;
         if self.tiles.remove(closing) {
             self.panes.remove(&closing);
         }
-        self.focused = *self.panes.keys().next().context("No remaining pane")?;
+        self.focused = *self.visible().first().context("No remaining pane")?;
         self.zoom = false;
         self.mode = Mode::Normal;
         self.notice("Pane closed");
@@ -795,14 +824,16 @@ impl App {
                 (*id, saved)
             })
             .collect();
-        Session::new(
+        let mut session = Session::new(
             self.tiles.clone(),
             self.focused,
             self.zoom,
             self.sidebar_visible,
             buffers,
             panes,
-        )
+        );
+        session.docked = self.docked.clone();
+        session
     }
     /// Save the session when it changed. `force` also starts sessions in a project
     /// that has none yet (`:session save`).
@@ -907,11 +938,16 @@ impl App {
             self.panes.insert(id, pane);
         }
         self.tiles = saved.tiles;
+        self.docked = saved.docked;
+        self.docked.retain(|id| self.tiles.contains(*id));
+        if self.visible().is_empty() {
+            self.docked.clear();
+        }
         self.next_pane = self.panes.keys().max().map_or(0, |id| id + 1);
-        self.focused = if self.panes.contains_key(&saved.focused) {
+        self.focused = if self.visible().contains(&saved.focused) {
             saved.focused
         } else {
-            *self.panes.keys().next().context("Session has no panes")?
+            *self.visible().first().context("Session has no panes")?
         };
         self.zoom = saved.zoom;
         self.sidebar_visible = saved.sidebar_visible;
@@ -1100,7 +1136,11 @@ impl App {
         }
         if let Some((id, title)) = finished {
             sound::play(&self.config.ai_sound);
-            if id != self.focused {
+            if self.docked.contains(&id) {
+                self.notice(format!(
+                    "{title} finished · it's docked: Ctrl-b D brings it back"
+                ));
+            } else if id != self.focused {
                 self.notice(format!("{title} finished · Ctrl-b arrows to go there"));
             }
         }
@@ -1257,6 +1297,15 @@ impl App {
         let at = (mouse.column, mouse.row);
         let inside = |r: Rect| at.0 >= r.x && at.0 < r.right() && at.1 >= r.y && at.1 < r.bottom();
         let pane = self.rectangles.iter().copied().find(|(_, r)| inside(*r));
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            if let Some(&(id, _)) = self.dock_tabs.iter().find(|(_, r)| inside(*r)) {
+                if let Some(index) = self.docked.iter().position(|d| *d == id) {
+                    self.dock_list = None;
+                    self.undock(index);
+                }
+                return Ok(());
+            }
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
                 let up = mouse.kind == MouseEventKind::ScrollUp;
@@ -1434,6 +1483,9 @@ impl App {
         }
         if self.picker.is_some() {
             return self.picker_key(key);
+        }
+        if self.dock_list.is_some() {
+            return self.dock_list_key(key);
         }
         if self.hover.take().is_some() && key.code == KeyCode::Esc {
             return Ok(());
@@ -2042,6 +2094,8 @@ impl App {
             KeyCode::Char('K') => self.move_pane(KeyCode::Up),
             KeyCode::Char('J') => self.move_pane(KeyCode::Down),
             KeyCode::Char(' ') => self.flip_split(),
+            KeyCode::Char('d') => self.dock(),
+            KeyCode::Char('D') => self.open_dock_list(),
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     let axis = if matches!(key.code, KeyCode::Left | KeyCode::Right) {
@@ -2070,7 +2124,7 @@ impl App {
             }
             KeyCode::Esc => {}
             _ => self.notice(
-                "Ctrl-b: % split · \" stack · c shell below · C beside · a AI · arrows focus · ⇧arrows move · ? help",
+                "Ctrl-b: % split · \" stack · c shell below · C beside · a AI · arrows focus · ⇧arrows move · d dock · ? help",
             ),
         }
         Ok(())
@@ -2087,8 +2141,130 @@ impl App {
         }
         self.mode = Mode::Normal;
     }
+    /// The panes on screen (not docked), in layout order.
+    pub fn visible(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        self.tiles.leaves(&mut ids);
+        ids.retain(|id| !self.docked.contains(id));
+        ids
+    }
+    /// A short name for a pane: the file, the program, GIT or AI.
+    pub fn pane_name(&self, id: usize) -> String {
+        match self.panes.get(&id) {
+            Some(Pane::Editor(b)) | Some(Pane::Preview(Preview { buffer: b, .. })) => {
+                workspace::printable(&self.buffers[*b].name())
+            }
+            Some(Pane::Terminal(t)) => t.title.clone(),
+            Some(Pane::Git(_)) => "Git".into(),
+            Some(Pane::Ai) => "AI launcher".into(),
+            None => "?".into(),
+        }
+    }
+    /// Ctrl-b d: hide the focused pane, still running; it waits in the dock (tabs
+    /// in the top bar) and comes back to the same place and size.
+    fn dock(&mut self) {
+        let id = self.focused;
+        if self.visible().len() < 2 {
+            return self.notice("The last pane on screen stays · open another first");
+        }
+        if self.copy.as_ref().is_some_and(|c| c.pane == id) {
+            self.copy = None;
+        }
+        self.close_find();
+        // Focus the pane that takes over most of its room.
+        let room = self
+            .rectangles
+            .iter()
+            .find(|(p, _)| *p == id)
+            .map(|(_, r)| *r);
+        let area = self
+            .rectangles
+            .iter()
+            .map(|(_, r)| *r)
+            .reduce(|a, b| a.union(b));
+        self.docked.push(id);
+        self.zoom = false;
+        let mut after = Vec::new();
+        if let Some(area) = area {
+            self.tiles.layout(area, &self.docked, &mut after);
+        }
+        let heir = room.and_then(|room| {
+            after
+                .iter()
+                .max_by_key(|(_, r)| {
+                    let shared = r.intersection(room);
+                    u32::from(shared.width) * u32::from(shared.height)
+                })
+                .map(|(p, _)| *p)
+        });
+        self.focused = heir
+            .or_else(|| self.visible().first().copied())
+            .unwrap_or(id);
+        self.sidebar_focus = false;
+        self.mode = Mode::Normal;
+        let name = self.pane_name(id);
+        self.notice(format!(
+            "{name} docked and still running · Ctrl-b D or click its tab to bring it back"
+        ));
+    }
+    /// Bring docked pane number `index` back where it was, and focus it.
+    fn undock(&mut self, index: usize) {
+        if index >= self.docked.len() {
+            return;
+        }
+        let id = self.docked.remove(index);
+        self.focused = id;
+        self.zoom = false;
+        self.sidebar_focus = false;
+        self.mode = Mode::Normal;
+        self.close_find();
+        let name = self.pane_name(id);
+        self.notice(format!("{name} is back"));
+    }
+    /// Ctrl-b D: the docked panes, to bring one back (or close it).
+    fn open_dock_list(&mut self) {
+        if self.docked.is_empty() {
+            self.notice("Nothing docked · Ctrl-b d docks the focused pane");
+        } else {
+            self.dock_list = Some(self.docked.len() - 1);
+        }
+    }
+    fn dock_list_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(selected) = self.dock_list else {
+            return Ok(());
+        };
+        let len = self.docked.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.dock_list = Some(selected.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.dock_list = Some((selected + 1).min(len.saturating_sub(1)))
+            }
+            KeyCode::Enter => {
+                self.dock_list = None;
+                self.undock(selected);
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                let index = c as usize - '1' as usize;
+                if index < len {
+                    self.dock_list = None;
+                    self.undock(index);
+                }
+            }
+            KeyCode::Char('x') => {
+                let id = self.docked.remove(selected);
+                let name = self.pane_name(id);
+                self.tiles.remove(id);
+                self.panes.remove(&id);
+                self.dock_list =
+                    (!self.docked.is_empty()).then(|| selected.min(self.docked.len() - 1));
+                self.notice(format!("{name} closed"));
+            }
+            _ => self.dock_list = None,
+        }
+        Ok(())
+    }
     fn cycle(&mut self) {
-        let ids: Vec<usize> = self.panes.keys().copied().collect();
+        let ids = self.visible();
         let index = ids.iter().position(|id| *id == self.focused).unwrap_or(0);
         self.focused = ids[(index + 1) % ids.len()];
         self.sidebar_focus = false;
@@ -2159,7 +2335,7 @@ impl App {
     /// side of the window (a terminal below two editors moves to a full-height
     /// column on the right).
     fn move_pane(&mut self, direction: KeyCode) {
-        if self.panes.len() < 2 {
+        if self.visible().len() < 2 {
             return self.notice("Only one pane");
         }
         if self.zoom {
@@ -3487,6 +3663,22 @@ impl App {
                 self.move_pane(direction);
             }
             "flip" => self.flip_split(),
+            "dock" => self.dock(),
+            // :undock (the dock list), :undock 2, :undock claude
+            "undock" => match arg {
+                "" => self.open_dock_list(),
+                _ => {
+                    let index = arg
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|n| n.checked_sub(1))
+                        .or_else(|| self.docked.iter().position(|d| self.pane_name(*d) == arg));
+                    match index.filter(|i| *i < self.docked.len()) {
+                        Some(i) => self.undock(i),
+                        None => bail!("Nothing docked as {arg} · :undock lists them"),
+                    }
+                }
+            },
             "noh" | "nohlsearch" => {
                 if let Some(b) = self.active_buffer() {
                     b.search.clear();
@@ -4418,6 +4610,96 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert_eq!(go(below, KeyCode::Right), below);
         assert_eq!(go(below, KeyCode::Left), below);
         assert!([top_left, top_right].contains(&go(below, KeyCode::Up)));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn docked_panes_keep_running_and_come_back_to_the_same_place() {
+        // Two panes on top (a, b), a shell below across the whole width (c).
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let a = app.focused;
+        app.open_terminal(
+            Some((
+                "/bin/sh",
+                vec!["-c".into(), "read x; echo got-$x; exec cat".into()],
+            )),
+            Some(Axis::Vertical),
+        )
+        .unwrap();
+        let c = app.focused;
+        app.focused = a;
+        app.split_editor(Axis::Horizontal).unwrap();
+        let b = app.focused;
+        let prefix = |app: &mut App, code| {
+            press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(app, code, KeyModifiers::SHIFT);
+        };
+        let rect = |app: &App, id| app.rectangles.iter().find(|(i, _)| *i == id).map(|r| r.1);
+        screen(&mut app, 120, 30);
+        let (before_b, before_c) = (rect(&app, b).unwrap(), rect(&app, c).unwrap());
+        // Dock the shell: the top panes take its room, and focus goes there.
+        app.focused = c;
+        prefix(&mut app, KeyCode::Char('d'));
+        assert_eq!(app.docked, vec![c]);
+        assert_ne!(app.focused, c);
+        let shown = screen(&mut app, 120, 30).join("\n");
+        assert!(rect(&app, c).is_none());
+        assert!(
+            rect(&app, a).unwrap().height > before_c.y - 2,
+            "full height now"
+        );
+        assert!(
+            shown.contains(" dock ") && shown.contains(" 1 sh "),
+            "{shown}"
+        );
+        // It keeps running while docked.
+        if let Some(Pane::Terminal(t)) = app.panes.get_mut(&c) {
+            t.send(b"hi\n").unwrap();
+        }
+        let mut got = false;
+        for _ in 0..200 {
+            app.tick();
+            if let Some(Pane::Terminal(t)) = app.panes.get(&c) {
+                got = t.transcript().contains("got-hi");
+            }
+            if got {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(got, "the docked shell answered");
+        // Dock b too, then bring both back from the list and a tab click.
+        app.focused = b;
+        app.command("dock").unwrap();
+        assert_eq!(app.visible(), vec![a]);
+        prefix(&mut app, KeyCode::Char('d'));
+        assert!(app.message.contains("last pane"), "the last one stays");
+        prefix(&mut app, KeyCode::Char('D'));
+        assert_eq!(app.dock_list, Some(1), "the newest is selected");
+        press(&mut app, KeyCode::Char('1'), KeyModifiers::NONE);
+        assert_eq!(app.focused, c);
+        screen(&mut app, 120, 30);
+        assert_eq!(rect(&app, c).unwrap().y, before_c.y, "back below");
+        let (id, tab) = app.dock_tabs[0];
+        assert_eq!(id, b);
+        app.event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: tab.x + 1,
+            row: tab.y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        screen(&mut app, 120, 30);
+        assert_eq!(rect(&app, b), Some(before_b), "same place and size");
+        assert_eq!(rect(&app, c), Some(before_c));
+        assert!(app.docked.is_empty());
+        // Docked panes are saved with the session; x in the list closes one.
+        app.focused = c;
+        app.command("dock").unwrap();
+        assert_eq!(app.session().docked, vec![c]);
+        app.command("undock").unwrap();
+        press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(!app.panes.contains_key(&c) && app.docked.is_empty());
+        assert_eq!(app.visible().len(), 2);
     }
     #[test]
     fn a_maximized_pane_says_other_panes_are_hidden() {

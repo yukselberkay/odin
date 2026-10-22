@@ -25,6 +25,9 @@ pub struct Session {
     pub sidebar_visible: bool,
     pub buffers: Vec<SavedBuffer>,
     pub panes: Vec<(usize, SavedPane)>,
+    /// Panes in the layout but docked (Ctrl-b d): hidden, still running.
+    #[serde(default)]
+    pub docked: Vec<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +80,7 @@ impl Session {
             sidebar_visible,
             buffers,
             panes,
+            docked: Vec::new(),
         }
     }
 

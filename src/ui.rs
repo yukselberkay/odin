@@ -83,11 +83,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Style::default().fg(color(&theme.muted)),
         ),
     ]);
+    let title_width = title.width() as u16;
     if !bare {
         frame.render_widget(
             Paragraph::new(title),
             Rect::new(area.x, area.y, area.width, 1),
         );
+    }
+    app.dock_tabs.clear();
+    if !bare && !app.docked.is_empty() {
+        let end = if area.width > 110 {
+            area.right() - 45
+        } else {
+            area.right()
+        };
+        dock_tabs(frame, app, area.x + title_width + 2, end, area.y);
     }
     if area.width > 110 && !bare {
         let right = format!(
@@ -97,7 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             } else {
                 &app.git.branch
             },
-            app.panes.len()
+            app.visible().len()
         );
         frame.render_widget(
             Paragraph::new(right)
@@ -148,7 +158,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.zoom || bare {
         app.rectangles.push((app.focused, content));
     } else {
-        app.tiles.rectangles(content, &mut app.rectangles);
+        app.tiles.layout(content, &app.docked, &mut app.rectangles);
     }
     let rectangles = app.rectangles.clone();
     let selection = app.selection();
@@ -205,7 +215,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let inner = block.inner(rect);
             frame.render_widget(block, rect);
             // Maximized (Ctrl-b z): say so, and that other panes are still running.
-            let hidden = app.panes.len().saturating_sub(1);
+            let hidden = app.visible().len().saturating_sub(1);
             if app.zoom && hidden > 0 {
                 let badge = [
                     format!(
@@ -483,6 +493,114 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.picker.is_some() {
         theme_picker(frame, app, area);
+    }
+    if app.dock_list.is_some() {
+        dock_list(frame, app, area);
+    }
+}
+
+/// The dock in the top bar: a tab per docked pane, numbered like the dock list; a
+/// click brings it back. Tabs that don't fit become "+N".
+fn dock_tabs(frame: &mut Frame, app: &mut App, start: u16, end: u16, y: u16) {
+    let theme = &app.theme;
+    let label = " dock ";
+    let mut x = start;
+    if x + label.len() as u16 + 8 > end {
+        return;
+    }
+    text(
+        frame,
+        Rect::new(x, y, label.len() as u16, 1),
+        label,
+        color(&theme.muted),
+    );
+    x += label.len() as u16;
+    let count = app.docked.len();
+    let mut tabs = Vec::new();
+    for (n, docked) in app.docked.iter().enumerate() {
+        let mut name = app.pane_name(*docked);
+        if name.chars().count() > 18 {
+            name = name.chars().take(17).collect::<String>() + "…";
+        }
+        let exited = matches!(app.panes.get(docked), Some(Pane::Terminal(t)) if t.exited.is_some());
+        let tab = format!(
+            " {} {name}{} ",
+            n + 1,
+            if exited { " · exited" } else { "" }
+        );
+        let width = tab.chars().count() as u16;
+        let more = format!(" +{} ", count - n);
+        // Leave room for "+N" unless this is the last tab.
+        let reserve = if n + 1 < count { more.len() as u16 } else { 0 };
+        if x + width + reserve > end {
+            text(
+                frame,
+                Rect::new(x, y, more.len() as u16, 1),
+                more,
+                color(&theme.accent),
+            );
+            break;
+        }
+        frame.render_widget(
+            Paragraph::new(tab).style(
+                Style::default()
+                    .fg(color(&theme.foreground))
+                    .bg(color(&theme.selection)),
+            ),
+            Rect::new(x, y, width, 1),
+        );
+        tabs.push((*docked, Rect::new(x, y, width, 1)));
+        x += width + 1;
+    }
+    app.dock_tabs = tabs;
+}
+
+/// Ctrl-b D: the docked panes; Enter (or a digit) brings one back.
+fn dock_list(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(selected) = app.dock_list else {
+        return;
+    };
+    let theme = &app.theme;
+    let width = area.width.saturating_sub(6).min(56);
+    let height = (app.docked.len() as u16 + 3).min(area.height.saturating_sub(4));
+    if width < 20 || height < 4 {
+        return;
+    }
+    let rect = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, rect);
+    let block = panel(" DOCK · Enter brings back · x closes · Esc ", theme, true)
+        .style(Style::default().bg(color(&theme.background)));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    for (n, docked) in app
+        .docked
+        .iter()
+        .enumerate()
+        .take(inner.height as usize - 1)
+    {
+        let state = match app.panes.get(docked) {
+            Some(Pane::Terminal(t)) if t.exited.is_some() => "exited",
+            Some(Pane::Terminal(_)) => "running",
+            Some(Pane::Editor(b)) if app.buffers[*b].dirty => "unsaved",
+            _ => "",
+        };
+        let row = format!(" {}  {:<28} {state}", n + 1, app.pane_name(*docked));
+        let style = if n == selected {
+            Style::default()
+                .fg(color(&theme.background))
+                .bg(color(&theme.accent))
+        } else {
+            Style::default().fg(color(&theme.foreground))
+        };
+        frame.render_widget(
+            Paragraph::new(row).style(style),
+            Rect::new(inner.x, inner.y + n as u16, inner.width, 1),
+        );
     }
 }
 
@@ -1895,6 +2013,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         "COPY"
     } else if app.find.is_some() {
         "FIND"
+    } else if app.dock_list.is_some() {
+        "DOCK"
     } else if app.help && app.help_focus {
         "GUIDE"
     } else if app.sidebar_focus {
@@ -1968,7 +2088,9 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         let x = (value.chars().count() as u16).min(area.width.saturating_sub(1));
         frame.set_cursor_position((area.x + x, area.y + 1));
     } else {
-        let hints = if let Some(find) = &app.find {
+        let hints = if app.dock_list.is_some() {
+            " ↑ ↓ choose   Enter or 1-9 bring back   x close the pane   Esc"
+        } else if let Some(find) = &app.find {
             if find.replacing {
                 " Enter replace   ^A replace all   ↑ ↓ previous/next   Tab find/replace   ^W whole word   Esc close"
             } else {
@@ -1977,7 +2099,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         } else if app.copy.is_some() {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus {
             " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(v)) if v.diff.is_some())
@@ -2069,6 +2191,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Move the pane: swap, or take that whole side",
         ),
         ("Ctrl-b Space", "Flip split: side by side ↔ stacked"),
+        (
+            "Ctrl-b d / D",
+            "Dock (hide, keeps running) / docked list; click a tab",
+        ),
         ("Ctrl-b c / C", "New shell below / beside; :term right"),
         (
             "Ctrl-b a / A",

@@ -19,15 +19,33 @@ pub enum Tile {
 }
 
 impl Tile {
+    #[cfg(test)]
     pub fn rectangles(&self, rect: Rect, out: &mut Vec<(usize, Rect)>) {
+        self.layout(rect, &[], out);
+    }
+
+    /// Like [`rectangles`](Self::rectangles), leaving out the `hidden` (docked)
+    /// panes: the rest of their split takes their room, and they come back to
+    /// the same place and size.
+    pub fn layout(&self, rect: Rect, hidden: &[usize], out: &mut Vec<(usize, Rect)>) {
         match self {
-            Self::Leaf(id) => out.push((*id, rect)),
+            Self::Leaf(id) => {
+                if !hidden.contains(id) {
+                    out.push((*id, rect));
+                }
+            }
             Self::Split {
                 axis,
                 percent,
                 first,
                 second,
             } => {
+                match (first.shown(hidden), second.shown(hidden)) {
+                    (true, false) => return first.layout(rect, hidden, out),
+                    (false, true) => return second.layout(rect, hidden, out),
+                    (false, false) => return,
+                    (true, true) => {}
+                }
                 let (a, b) = match axis {
                     Axis::Horizontal => {
                         let w = (rect.width as u32 * *percent as u32 / 100) as u16;
@@ -44,8 +62,8 @@ impl Tile {
                         )
                     }
                 };
-                first.rectangles(a, out);
-                second.rectangles(b, out);
+                first.layout(a, hidden, out);
+                second.layout(b, hidden, out);
             }
         }
     }
@@ -99,6 +117,14 @@ impl Tile {
         match self {
             Self::Leaf(id) => *id == target,
             Self::Split { first, second, .. } => first.contains(target) || second.contains(target),
+        }
+    }
+
+    /// Whether any pane in this part of the layout is not hidden.
+    fn shown(&self, hidden: &[usize]) -> bool {
+        match self {
+            Self::Leaf(id) => !hidden.contains(id),
+            Self::Split { first, second, .. } => first.shown(hidden) || second.shown(hidden),
         }
     }
 

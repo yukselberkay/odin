@@ -254,6 +254,17 @@ same buffer in both views; use `:e another-file` in the new view to open somethi
 else. The buffer contents, cursor, and scroll position are shared when two views
 show the same buffer. Closing a terminal pane stops its terminal child process.
 
+### Docking panes
+
+`Ctrl-b d` (or `:dock`) hides the focused pane without stopping it: a shell, an AI
+agent or a server keeps running, and the panes around it take its room. Docked
+panes wait as numbered tabs in the top bar (` dock  1 claude  2 zsh `). Click a tab,
+or press `Ctrl-b D` and choose with ↑↓ Enter (or the number), to bring one back to
+the same place and size; `x` in that list closes it for good. `:undock 2` or
+`:undock claude` works too. An AI pane that finishes while docked still chimes and
+says so in the status line. Docked panes are saved with the session; the last pane
+on screen can't be docked, and closing it brings back the newest docked one.
+
 ### Reproduce the C + terminal screenshot
 
 From the Odin source directory:
@@ -345,6 +356,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b c` / `Ctrl-b C` | New terminal below / beside |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
 | `Ctrl-b z` / `x` | Maximize (zoom) / close current pane; a maximized pane shows `⛶ MAXIMIZED · N more panes` on its border |
+| `Ctrl-b d` / `Ctrl-b D` | Dock (hide) the pane, still running / list docked panes to bring one back ([Docking panes](#docking-panes)) |
 | `Ctrl-b +` / `-` / `0` | [Text size](#text-size) bigger / smaller / reset; keep pressing `+` or `-` to repeat |
 | `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
 | `Ctrl-b G` | Open the [Git pane](#git-pane); again focuses it, and when focused maximizes / restores it |

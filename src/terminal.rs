@@ -247,6 +247,33 @@ impl TerminalPane {
             .unwrap_or(false);
         self.send(&encode_key(key, app))
     }
+    /// Scroll the pane's history the way a terminal window does: PgUp/PgDn (Fn-↑/↓
+    /// on a Mac) move half a page; once scrolled back, ↑/↓ move a line, Home/End go
+    /// to the top/bottom and Esc returns. Programs that draw their own full screen
+    /// (vim, less) keep these keys. False when the key belongs to the program; any
+    /// other key returns to the bottom on its way there ([`key`](Self::key)).
+    pub fn scroll_key(&mut self, key: KeyEvent) -> bool {
+        let Ok(mut parser) = self.parser.lock() else {
+            return false;
+        };
+        let screen = parser.screen();
+        if screen.alternate_screen() || !(key.modifiers - KeyModifiers::SHIFT).is_empty() {
+            return false;
+        }
+        let back = screen.scrollback();
+        let half = usize::from(screen.size().0 / 2).max(1);
+        let to = match key.code {
+            KeyCode::PageUp => back + half,
+            KeyCode::PageDown if back > 0 => back.saturating_sub(half),
+            KeyCode::Up if back > 0 => back + 1,
+            KeyCode::Down if back > 0 => back - 1,
+            KeyCode::Home if back > 0 => usize::MAX,
+            KeyCode::End | KeyCode::Esc if back > 0 => 0,
+            _ => return false,
+        };
+        parser.set_scrollback(to);
+        true
+    }
     pub fn paste(&mut self, text: &str) -> Result<()> {
         let bracketed = self
             .parser
@@ -261,12 +288,6 @@ impl TerminalPane {
             self.send(b"\x1b[201~")?;
         }
         Ok(())
-    }
-    pub fn scroll(&mut self, delta: isize) {
-        if let Ok(mut parser) = self.parser.lock() {
-            let scroll = parser.screen().scrollback().saturating_add_signed(delta);
-            parser.set_scrollback(scroll);
-        }
     }
     pub fn poll(&mut self) -> bool {
         let mut dirty = self.dirty.swap(false, Ordering::Relaxed);

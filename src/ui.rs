@@ -324,6 +324,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                             frame.set_cursor_position((inner.x + col, inner.y + row));
                         }
                     }
+                    let back = screen.scrollback();
+                    if back > 0 && !bare {
+                        let hint = format!(" ↑ {back} lines · ↑↓ PgUp PgDn scroll · End returns ");
+                        let width = (hint.chars().count() as u16).min(inner.width);
+                        text(
+                            frame,
+                            Rect::new(inner.right() - width, inner.y, width, 1),
+                            hint,
+                            color(&theme.accent),
+                        );
+                    }
                 }
                 if let Some(exit) = terminal.exited.as_ref().filter(|_| !bare) {
                     text(
@@ -1937,9 +1948,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Ctrl-b Z",
             "Copy view: only this pane's text, for mouse selection",
         ),
+        ("Ctrl-b g", "Focus the Git sidebar"),
         (
-            "Ctrl-b g / PgUp / PgDn",
-            "Git sidebar / terminal scrollback",
+            "PgUp / PgDn (Fn-↑/↓)",
+            "Scroll a terminal or AI pane half a page; ↑↓ a line, End returns",
         ),
         (
             ":git  or  Ctrl-b G",

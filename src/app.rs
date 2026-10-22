@@ -1301,7 +1301,12 @@ impl App {
             return self.sidebar_key(key);
         }
         match self.panes.get_mut(&self.focused) {
-            Some(Pane::Terminal(terminal)) => return terminal.key(key),
+            Some(Pane::Terminal(terminal)) => {
+                if terminal.scroll_key(key) {
+                    return Ok(());
+                }
+                return terminal.key(key);
+            }
             Some(Pane::Preview(_)) => return self.preview_key(key),
             Some(Pane::Git(_)) => return self.git_pane_key(key),
             Some(Pane::Ai) => {
@@ -1661,7 +1666,7 @@ impl App {
             KeyCode::Char('j') => self.move_focus(KeyCode::Down),
             KeyCode::PageUp | KeyCode::PageDown => {
                 if let Some(Pane::Terminal(t)) = self.panes.get_mut(&self.focused) {
-                    t.scroll(if key.code == KeyCode::PageUp { 10 } else { -10 });
+                    t.scroll_key(KeyEvent::new(key.code, KeyModifiers::NONE));
                 }
             }
             KeyCode::Esc => {}
@@ -4241,6 +4246,65 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         press(&mut app, KeyCode::Char('Z'), KeyModifiers::SHIFT);
         assert!(app.copy_view.is_none());
         assert!(screen(&mut app, 100, 24).join("\n").contains("EXPLORER"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn page_keys_scroll_terminal_history_in_half_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let script = "seq 1 200; echo done; exec sleep 30".to_string();
+        app.open_terminal(
+            Some(("/bin/sh", vec!["-c".into(), script])),
+            Some(Axis::Vertical),
+        )
+        .unwrap();
+        let shell = app.focused;
+        let back = |app: &App| {
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            t.parser.lock().unwrap().screen().scrollback()
+        };
+        screen(&mut app, 120, 30);
+        for _ in 0..300 {
+            app.tick();
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            if t.transcript().contains("done") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let rows = {
+            let Some(Pane::Terminal(t)) = app.panes.get(&shell) else {
+                unreachable!()
+            };
+            usize::from(t.parser.lock().unwrap().screen().size().0)
+        };
+        // Arrows belong to the program until the pane is scrolled back.
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert_eq!(back(&app), 0);
+        press(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(back(&app), rows / 2, "half a page, not a whole one");
+        assert!(screen(&mut app, 120, 30).join("\n").contains("End returns"));
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert_eq!(back(&app), rows / 2 + 1, "arrows step one line");
+        press(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+        assert_eq!(back(&app), 1);
+        press(&mut app, KeyCode::Home, KeyModifiers::NONE);
+        assert!(back(&app) > 150, "Home goes to the oldest line");
+        press(&mut app, KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(back(&app), 0);
+        // Ctrl-b PgUp does the same; typing returns to the prompt.
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
+        assert_eq!(back(&app), rows / 2);
+        press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(back(&app), 0);
     }
 
     #[cfg(unix)]

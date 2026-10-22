@@ -91,13 +91,35 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         );
     }
     app.dock_tabs.clear();
+    let end = if area.width > 110 {
+        area.right() - 45
+    } else {
+        area.right()
+    };
+    let mut x = area.x + title_width + 2;
+    // Ctrl-b y: a reminder that the mouse is the terminal's until it's taken back.
+    if !bare && app.mouse_released {
+        let badges = [
+            " ⇱ MOUSE RELEASED · select, ⌘C · Ctrl-b y takes it back ",
+            " ⇱ MOUSE RELEASED · Ctrl-b y ",
+            " ⇱ MOUSE ",
+        ];
+        if let Some(badge) = badges.iter().find(|b| x + b.chars().count() as u16 <= end) {
+            let width = badge.chars().count() as u16;
+            frame.render_widget(
+                Paragraph::new(*badge).style(
+                    Style::default()
+                        .fg(color(&theme.background))
+                        .bg(color(&theme.warning))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Rect::new(x, area.y, width, 1),
+            );
+            x += width + 1;
+        }
+    }
     if !bare && !app.docked.is_empty() {
-        let end = if area.width > 110 {
-            area.right() - 45
-        } else {
-            area.right()
-        };
-        dock_tabs(frame, app, area.x + title_width + 2, end, area.y);
+        dock_tabs(frame, app, x, end, area.y);
     }
     if area.width > 110 && !bare {
         let right = format!(
@@ -2269,7 +2291,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         } else if app.copy.is_some() {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  y mouse  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus && app.explorer_search.is_some() {
             " type to search names and text   ↑ ↓ preview   Enter open at the line   ^U clear   Esc back to the tree"
         } else if app.sidebar_focus && !app.git_focus {
@@ -2396,6 +2418,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             "Ctrl-b Z",
             "Copy view: only this pane's text, for mouse selection",
+        ),
+        (
+            "Ctrl-b y",
+            "Mouse to the terminal: select + ⌘C; again for the wheel",
         ),
         (
             "Mouse wheel / click",

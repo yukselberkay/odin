@@ -325,6 +325,9 @@ pub struct App {
     /// The word (buffer, row, start column) completions were last asked for while
     /// typing, so each word asks the language server once.
     asked: Option<(usize, usize, usize)>,
+    /// Ctrl-b y: the mouse is handed back to the terminal (select, ⌘C) with the
+    /// layout unchanged, until Ctrl-b y again.
+    pub mouse_released: bool,
 }
 
 impl App {
@@ -405,6 +408,7 @@ impl App {
             explorer_search: None,
             search_lines: Vec::new(),
             asked: None,
+            mouse_released: false,
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -1409,7 +1413,20 @@ impl App {
     /// Odin takes the mouse (config `mouse`), except in copy view, which is for
     /// selecting text with it.
     pub fn mouse_wanted(&self) -> bool {
-        self.config.mouse && self.copy_view.is_none()
+        self.config.mouse && self.copy_view.is_none() && !self.mouse_released
+    }
+    /// Ctrl-b y (`:mouse`): give the mouse to the terminal for selecting and
+    /// copying, the layout as it is; again to take it back for the wheel.
+    fn toggle_mouse(&mut self) {
+        if !self.config.mouse {
+            return self.notice("mouse = false in config.toml: the terminal has the mouse already");
+        }
+        self.mouse_released = !self.mouse_released;
+        self.notice(if self.mouse_released {
+            "Mouse released: drag to select, ⌘C / Ctrl-Shift-C copies · Ctrl-b y gives the wheel back"
+        } else {
+            "Mouse back: wheel scrolls, click focuses · Ctrl-b y releases it again"
+        });
     }
     /// The wheel scrolls what's under the pointer; a click focuses it, puts the
     /// editor cursor there, or opens the explorer entry.
@@ -2249,6 +2266,7 @@ impl App {
             KeyCode::Char('J') => self.move_pane(KeyCode::Down),
             KeyCode::Char(' ') => self.flip_split(),
             KeyCode::Char('d') => self.dock(),
+            KeyCode::Char('y') => self.toggle_mouse(),
             KeyCode::Char('D') => self.open_dock_list(),
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -3952,6 +3970,13 @@ impl App {
             }
             "flip" => self.flip_split(),
             "dock" => self.dock(),
+            "mouse" => match arg {
+                "" => self.toggle_mouse(),
+                "off" | "release" if !self.mouse_released => self.toggle_mouse(),
+                "on" if self.mouse_released => self.toggle_mouse(),
+                "on" | "off" | "release" => {}
+                _ => bail!("Use :mouse, :mouse off (release it) or :mouse on"),
+            },
             // :undock (the dock list), :undock 2, :undock claude
             "undock" => match arg {
                 "" => self.open_dock_list(),
@@ -5146,6 +5171,36 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         press(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
         assert!(!app.panes.contains_key(&c) && app.docked.is_empty());
         assert_eq!(app.visible().len(), 2);
+    }
+    #[test]
+    fn ctrl_b_y_hands_the_mouse_to_the_terminal_and_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let toggle = |app: &mut App| {
+            press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(app, KeyCode::Char('y'), KeyModifiers::NONE);
+        };
+        assert!(app.mouse_wanted());
+        toggle(&mut app);
+        assert!(!app.mouse_wanted(), "released for the terminal's selection");
+        let shown = screen(&mut app, 120, 20).join("\n");
+        assert!(shown.contains("MOUSE RELEASED"), "{shown}");
+        assert!(shown.contains("EXPLORER"), "the layout stays as it is");
+        toggle(&mut app);
+        assert!(app.mouse_wanted());
+        assert!(!screen(&mut app, 120, 20)
+            .join("\n")
+            .contains("MOUSE RELEASED"));
+        // :mouse off / on say what they mean, whatever the state.
+        app.command("mouse off").unwrap();
+        app.command("mouse off").unwrap();
+        assert!(!app.mouse_wanted());
+        app.command("mouse on").unwrap();
+        assert!(app.mouse_wanted());
+        assert!(app.command("mouse sideways").is_err());
+        app.config.mouse = false;
+        toggle(&mut app);
+        assert!(app.message.contains("mouse = false"));
     }
     #[test]
     fn a_maximized_pane_says_other_panes_are_hidden() {

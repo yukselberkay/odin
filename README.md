@@ -356,6 +356,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b c` / `Ctrl-b C` | New terminal below / beside |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |
 | `Ctrl-b z` / `x` | Maximize (zoom) / close current pane; a maximized pane shows `⛶ MAXIMIZED · N more panes` on its border |
+| `Ctrl-b y` | Hand the mouse to the terminal for selecting and copying (layout unchanged); again to take it back ([Mouse](#mouse)) |
 | `Ctrl-b d` / `Ctrl-b D` | Dock (hide) the pane, still running / list docked panes to bring one back ([Docking panes](#docking-panes)) |
 | `Ctrl-b +` / `-` / `0` | [Text size](#text-size) bigger / smaller / reset; keep pressing `+` or `-` to repeat |
 | `Ctrl-b s` / `g` | Toggle sidebar / focus the sidebar's Git section |
@@ -700,10 +701,18 @@ Claude Code's full-screen mode, htop; other full-screen programs like `less` get
 arrow keys, as in a normal terminal. A click focuses a pane, puts the editor cursor
 on the character you clicked, or opens an explorer entry.
 
-While Odin has the mouse, your terminal's click-and-drag selection is off: use copy
-view (`Ctrl-b Z`), which gives the mouse back, or your terminal's bypass key (Option
-in iTerm2, Shift in most Linux terminals). `mouse = false` in config.toml leaves the
-mouse to the terminal entirely.
+While Odin has the mouse, your terminal's click-and-drag selection is off. To select
+and copy with the mouse:
+
+- **`Ctrl-b y`** (or `:mouse off`) hands the mouse back to the terminal and leaves the
+  layout as it is: drag to select, ⌘C (Ctrl-Shift-C on Linux), paste anywhere. A
+  `⇱ MOUSE RELEASED` badge in the top bar reminds you; `Ctrl-b y` again (or
+  `:mouse on`) brings back the wheel and clicks.
+- **Copy view (`Ctrl-b Z`)** does the same with only the focused pane on screen, edge
+  to edge, so a selection can't pick up the explorer, borders or line numbers.
+- Your terminal's bypass key works too (Option in iTerm2, Shift in most Linux
+  terminals), and `mouse = false` in config.toml leaves the mouse to the terminal
+  for good.
 
 ### Copying from terminal and AI panes
 

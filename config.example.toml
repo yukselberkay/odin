@@ -44,8 +44,9 @@ ai_skill = true
 ai_sound = "default"
 # Mouse wheel scrolls the pane (or explorer, guide) under the pointer; a click
 # focuses a pane, puts the editor cursor there, or opens an explorer entry. While
-# Odin has the mouse, select text in copy view (Ctrl-b Z gives the mouse back), or
-# hold your terminal's bypass key (Option in iTerm2, Shift in most Linux terminals).
+# Odin has the mouse, Ctrl-b y hands it to the terminal for selecting and copying
+# (again to take it back), as does copy view (Ctrl-b Z); or hold your terminal's
+# bypass key (Option in iTerm2, Shift in most Linux terminals).
 mouse = true
 # shell = "/bin/zsh"
 

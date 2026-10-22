@@ -779,13 +779,251 @@ fn explorer_hint(width: usize) -> &'static str {
     .unwrap_or("")
 }
 
-fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
+/// The sidebar's Git section: branch, changed files, graph.
+fn git_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
+    let block = panel(" GIT / TREE ", theme, app.sidebar_focus && app.git_focus);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let mut lines = Vec::new();
+    if let Some(error) = &app.git.error {
+        lines.push(Line::styled(
+            format!(" {error}"),
+            Style::default().fg(color(&theme.muted)),
+        ));
+    } else {
+        lines.push(Line::styled(
+            format!(" ⎇ {}", app.git.branch),
+            Style::default()
+                .fg(color(&theme.accent))
+                .add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::styled(
+            format!(
+                " {} changed · {}",
+                app.git.changes.len(),
+                if app.git.changes.is_empty() {
+                    "clean"
+                } else {
+                    "working tree"
+                }
+            ),
+            Style::default().fg(color(&theme.muted)),
+        ));
+        let max_changes = if app.git.graph.is_empty() {
+            inner.height.saturating_sub(3) as usize
+        } else {
+            (inner.height / 3).max(1) as usize
+        };
+        let start = if app.git_focus {
+            app.git_selected
+                .saturating_sub(max_changes.saturating_sub(1))
+        } else {
+            0
+        };
+        for (index, (code, path)) in app
+            .git
+            .changes
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(max_changes)
+        {
+            let mut style = Style::default().fg(color(&theme.warning));
+            if app.sidebar_focus && app.git_focus && index == app.git_selected {
+                style = style.bg(color(&theme.selection));
+            }
+            lines.push(Line::styled(format!(" {code} {}", printable(path)), style));
+        }
+        if !app.git.graph.is_empty() {
+            lines.push(Line::from(""));
+        }
+        for graph in &app.git.graph {
+            lines.push(Line::styled(
+                format!(" {graph}"),
+                Style::default().fg(color(&theme.secondary)),
+            ));
+        }
+        if app.git.graph.is_empty() && app.git.changes.is_empty() {
+            lines.push(Line::styled(
+                " No commits yet",
+                Style::default().fg(color(&theme.muted)),
+            ));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Find in files (Ctrl-f in the explorer), in place of the file tree: the query,
+/// a count, then the results grouped by file.
+fn explorer_search(frame: &mut Frame, app: &mut App, area: Rect) {
+    let theme = app.theme.clone();
+    let focused = app.sidebar_focus && !app.git_focus;
+    let block = panel(" SEARCH ", &theme, focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let Some(search) = app.explorer_search.as_mut() else {
+        return;
+    };
+    if inner.height < 4 || inner.width < 8 {
+        return;
+    }
+    let width = inner.width as usize;
+    // The query, its end kept in view.
+    let query: Vec<char> = search.query.chars().collect();
+    let room = width.saturating_sub(4);
+    let shown: String = query[query.len().saturating_sub(room)..].iter().collect();
+    let shown = printable(&shown);
+    text(
+        frame,
+        Rect::new(inner.x, inner.y, inner.width, 1),
+        format!(" ⌕ {shown}"),
+        color(&theme.accent),
+    );
+    if focused {
+        let x = 3 + display_width(shown.chars(), 4) as u16;
+        frame.set_cursor_position((inner.x + x.min(inner.width - 1), inner.y));
+    }
+    let status = if search.query.is_empty() {
+        "Type to search file names and text".to_string()
+    } else if search.running && search.hits.is_empty() {
+        "Searching…".to_string()
+    } else if search.hits.is_empty() {
+        "No results".to_string()
+    } else {
+        format!(
+            "{}{} results in {} files{}",
+            if search.truncated { "First " } else { "" },
+            search.hits.len(),
+            search.files(),
+            if search.running {
+                " · searching…"
+            } else {
+                ""
+            }
+        )
+    };
+    text(
+        frame,
+        Rect::new(inner.x, inner.y + 1, inner.width, 1),
+        format!(" {status}"),
+        color(
+            if search.hits.is_empty() && !search.query.is_empty() && !search.running {
+                &theme.warning
+            } else {
+                &theme.muted
+            },
+        ),
+    );
+    // Rows: files whose name matches, then each file's matching lines under it.
+    let mut rows: Vec<(Option<usize>, Line)> = Vec::new();
+    let mut current: Option<&std::path::Path> = None;
+    for (index, hit) in search.hits.iter().enumerate() {
+        let name = hit.path.file_name().unwrap_or_default().to_string_lossy();
+        let folder = hit
+            .path
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let file_line = |marker: &str| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {marker}{}", printable(&name)),
+                    Style::default()
+                        .fg(color(&theme.foreground))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  {}", printable(&folder)),
+                    Style::default().fg(color(&theme.muted)),
+                ),
+            ])
+        };
+        match hit.line {
+            None => rows.push((Some(index), file_line("▸ "))),
+            Some(line) => {
+                if current != Some(hit.path.as_path()) {
+                    rows.push((None, file_line("")));
+                    current = Some(hit.path.as_path());
+                }
+                rows.push((
+                    Some(index),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("  {:>4} ", line + 1),
+                            Style::default().fg(color(&theme.muted)),
+                        ),
+                        Span::styled(
+                            printable(&hit.text),
+                            Style::default().fg(color(&theme.foreground)),
+                        ),
+                    ]),
+                ));
+            }
+        }
+    }
+    let list = Rect::new(
+        inner.x,
+        inner.y + 2,
+        inner.width,
+        inner.height.saturating_sub(3),
+    );
+    let height = list.height as usize;
+    let selected_row = rows
+        .iter()
+        .position(|(hit, _)| *hit == Some(search.selected))
+        .unwrap_or(0);
+    if selected_row < search.offset {
+        search.offset = selected_row.saturating_sub(1);
+    }
+    if height > 0 && selected_row >= search.offset + height {
+        search.offset = selected_row + 1 - height;
+    }
+    app.search_lines.clear();
+    for (n, (hit, line)) in rows
+        .into_iter()
+        .skip(search.offset)
+        .take(height)
+        .enumerate()
+    {
+        let selected = hit == Some(search.selected);
+        let style = if selected {
+            Style::default().bg(color(&theme.selection))
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(line).style(style),
+            Rect::new(list.x, list.y + n as u16, list.width, 1),
+        );
+        app.search_lines.push(hit);
+    }
+    app.explorer_rows = list;
+    text(
+        frame,
+        Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+        if width >= 34 {
+            " ↑↓ preview  Enter open  Esc tree"
+        } else {
+            " ↑↓ Enter Esc"
+        },
+        color(&theme.muted),
+    );
+}
+
+fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     let git_height = (area.height / 3).clamp(8, 16).min(area.height / 2);
     let regions = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(4), Constraint::Length(git_height)])
         .split(area);
+    app.git_area = regions[1];
+    if app.explorer_search.is_some() {
+        explorer_search(frame, app, regions[0]);
+        git_section(frame, app, regions[1]);
+        return;
+    }
+    let theme = &app.theme;
     let block = panel(" EXPLORER ", theme, app.sidebar_focus && !app.git_focus);
     let inner = block.inner(regions[0]);
     frame.render_widget(block, regions[0]);
@@ -798,7 +1036,6 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let visible = inner.height.saturating_sub(3) as usize;
     app.explorer_rows = Rect::new(inner.x, inner.y + 1, inner.width, visible as u16);
-    app.git_area = regions[1];
     if app.tree.selected < app.tree.offset {
         app.tree.offset = app.tree.selected;
     }
@@ -906,76 +1143,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
             color(&theme.muted),
         );
     }
-    let block = panel(" GIT / TREE ", theme, app.sidebar_focus && app.git_focus);
-    let inner = block.inner(regions[1]);
-    frame.render_widget(block, regions[1]);
-    let mut lines = Vec::new();
-    if let Some(error) = &app.git.error {
-        lines.push(Line::styled(
-            format!(" {error}"),
-            Style::default().fg(color(&theme.muted)),
-        ));
-    } else {
-        lines.push(Line::styled(
-            format!(" ⎇ {}", app.git.branch),
-            Style::default()
-                .fg(color(&theme.accent))
-                .add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::styled(
-            format!(
-                " {} changed · {}",
-                app.git.changes.len(),
-                if app.git.changes.is_empty() {
-                    "clean"
-                } else {
-                    "working tree"
-                }
-            ),
-            Style::default().fg(color(&theme.muted)),
-        ));
-        let max_changes = if app.git.graph.is_empty() {
-            inner.height.saturating_sub(3) as usize
-        } else {
-            (inner.height / 3).max(1) as usize
-        };
-        let start = if app.git_focus {
-            app.git_selected
-                .saturating_sub(max_changes.saturating_sub(1))
-        } else {
-            0
-        };
-        for (index, (code, path)) in app
-            .git
-            .changes
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(max_changes)
-        {
-            let mut style = Style::default().fg(color(&theme.warning));
-            if app.sidebar_focus && app.git_focus && index == app.git_selected {
-                style = style.bg(color(&theme.selection));
-            }
-            lines.push(Line::styled(format!(" {code} {}", printable(path)), style));
-        }
-        if !app.git.graph.is_empty() {
-            lines.push(Line::from(""));
-        }
-        for graph in &app.git.graph {
-            lines.push(Line::styled(
-                format!(" {graph}"),
-                Style::default().fg(color(&theme.secondary)),
-            ));
-        }
-        if app.git.graph.is_empty() && app.git.changes.is_empty() {
-            lines.push(Line::styled(
-                " No commits yet",
-                Style::default().fg(color(&theme.muted)),
-            ));
-        }
-    }
-    frame.render_widget(Paragraph::new(lines), inner);
+    git_section(frame, app, regions[1]);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2020,6 +2188,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
     } else if app.sidebar_focus {
         if app.git_focus {
             "GIT"
+        } else if app.explorer_search.is_some() {
+            "SEARCH"
         } else {
             "FILES"
         }
@@ -2100,6 +2270,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
             " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
+        } else if app.sidebar_focus && !app.git_focus && app.explorer_search.is_some() {
+            " type to search names and text   ↑ ↓ preview   Enter open at the line   ^U clear   Esc back to the tree"
         } else if app.sidebar_focus && !app.git_focus {
             " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(v)) if v.diff.is_some())
@@ -2305,6 +2477,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         (
             "Enter / ( [ { \" '",
             "Indents per language / close themselves; Shift-Tab dedents",
+        ),
+        (
+            "Explorer: Ctrl-f",
+            "Search the project: file names and text in files",
         ),
         (
             "Ctrl-f / Ctrl-h",

@@ -390,6 +390,19 @@ These shortcuts apply while the sidebar has focus (`FILES` or `GIT` in the statu
 | Tab | Switch between file explorer and Git section |
 | Escape | Return focus to the active pane |
 | `Ctrl-e` | From the Git section: jump to the explorer; in the explorer: return to the pane |
+| `Ctrl-f` | [Search the project](#search-the-project): file names and text in files |
+
+### Search the project
+
+`Ctrl-f` in the explorer turns it into a search: type, and the results come in as
+you type, grouped by file — files whose names match first, then every line holding
+the text (with its line number). Case is ignored until you type a capital letter.
+↑↓ preview a result in the editor with the match highlighted, Enter (or a click)
+opens it with the cursor on the match, `Ctrl-u` clears, and Escape goes back to the
+file tree; the search stays until then, so `Ctrl-e` returns to it. It searches what
+Git sees (ignored files left out) or, outside a repository, everything but `.git`,
+`target` and `node_modules`; binary files and files over 2 MB are skipped, and it
+stops at 2,000 results.
 
 Dotfiles and dot-directories (`.github`, `.env`, `.git`, `.odin`, …) are always shown.
 Only `target` and `node_modules` build output is left out of the tree; `Ctrl-p` still

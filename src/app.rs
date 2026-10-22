@@ -9,7 +9,7 @@ use crate::{
     layout::{Axis, Tile},
     lsp::{self, Lsp},
     markdown::{self, Previews},
-    quickdiff,
+    quickdiff, search,
     session::{self, SavedBuffer, SavedPane, Session},
     sound,
     terminal::{Launch, TerminalPane},
@@ -314,6 +314,10 @@ pub struct App {
     pub dock_list: Option<usize>,
     /// Where each docked pane's tab was drawn in the top bar, for clicks.
     pub dock_tabs: Vec<(usize, Rect)>,
+    /// Find in files (Ctrl-f in the explorer), shown in place of the file tree.
+    pub explorer_search: Option<search::Search>,
+    /// The result shown on each row of that list, for clicks.
+    pub search_lines: Vec<Option<usize>>,
 }
 
 impl App {
@@ -391,6 +395,8 @@ impl App {
             docked: Vec::new(),
             dock_list: None,
             dock_tabs: Vec::new(),
+            explorer_search: None,
+            search_lines: Vec::new(),
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -579,6 +585,105 @@ impl App {
         self.text_size_repeat = Some(Instant::now());
     }
     /// Show the file highlighted in the sidebar without leaving the sidebar.
+    /// Keys in the explorer's find-in-files view: typing searches, arrows preview,
+    /// Enter opens, Esc goes back to the file tree.
+    fn explorer_search_key(&mut self, key: KeyEvent) -> Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let Some(search) = self.explorer_search.as_mut() else {
+            return Ok(());
+        };
+        let last = search.hits.len().saturating_sub(1);
+        let mut restart = false;
+        match key.code {
+            KeyCode::Esc => {
+                self.explorer_search = None;
+                return Ok(());
+            }
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+                let step: isize = match key.code {
+                    KeyCode::Up => -1,
+                    KeyCode::Down => 1,
+                    KeyCode::PageUp => -10,
+                    _ => 10,
+                };
+                search.selected = search.selected.saturating_add_signed(step).min(last);
+                return self.show_hit(true);
+            }
+            KeyCode::Enter => return self.show_hit(false),
+            KeyCode::Tab => {
+                self.git_focus = true;
+                return Ok(());
+            }
+            KeyCode::Backspace => restart = search.query.pop().is_some(),
+            KeyCode::Char('u') if ctrl => {
+                restart = !search.query.is_empty();
+                search.query.clear();
+            }
+            KeyCode::Char('v') if ctrl => {
+                let (text, _) = self.clipboard.paste();
+                self.explorer_search_type(&text);
+                return Ok(());
+            }
+            KeyCode::Char(c) if !ctrl => {
+                search.query.push(c);
+                restart = true;
+            }
+            _ => {}
+        }
+        if restart {
+            search.start(&self.root);
+        }
+        Ok(())
+    }
+    /// Text typed or pasted into the explorer's search (its first line).
+    fn explorer_search_type(&mut self, text: &str) {
+        let text: String = text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
+        if let Some(search) = self.explorer_search.as_mut() {
+            search.query.push_str(&text);
+            search.start(&self.root);
+        }
+    }
+    /// Open the selected search result at its line, the match highlighted; `peek`
+    /// previews it and keeps the explorer focused.
+    fn show_hit(&mut self, peek: bool) -> Result<()> {
+        let Some(search) = &self.explorer_search else {
+            return Ok(());
+        };
+        let Some(hit) = search.hits.get(search.selected).cloned() else {
+            return Ok(());
+        };
+        let query = search.query.clone();
+        let path = self.root.join(&hit.path);
+        if peek {
+            self.open_file(&path, true)?;
+        } else {
+            self.open(&path)?;
+            self.sidebar_focus = false;
+        }
+        let canonical = path.canonicalize().unwrap_or(path);
+        if let Some(b) = self
+            .buffers
+            .iter_mut()
+            .find(|b| b.path.as_ref() == Some(&canonical))
+        {
+            if let Some(line) = hit.line {
+                b.row = line.min(b.lines().saturating_sub(1));
+                b.col = hit.col;
+                b.clamp();
+                b.scroll = b.row.saturating_sub(5);
+            }
+            b.search = query.clone();
+            b.search_case = query.chars().any(char::is_uppercase);
+            b.search_word = false;
+        }
+        Ok(())
+    }
     fn peek_selected(&mut self) {
         let path = if self.git_focus {
             self.git
@@ -1122,6 +1227,9 @@ impl App {
         for event in events {
             self.lsp_event(event);
         }
+        if let Some(search) = self.explorer_search.as_mut() {
+            self.redraw |= search.poll();
+        }
         let mut finished = None;
         for (id, pane) in self.panes.iter_mut() {
             match pane {
@@ -1261,7 +1369,10 @@ impl App {
             Event::Key(key) if key.kind != KeyEventKind::Release => self.key(key),
             Event::Mouse(mouse) => self.mouse(mouse),
             Event::Paste(text) => {
-                if self.find.is_some() {
+                if self.explorer_search.is_some() && self.sidebar_focus && !self.git_focus {
+                    self.explorer_search_type(&text);
+                    Ok(())
+                } else if self.find.is_some() {
                     self.find_type(&text);
                     Ok(())
                 } else if let Some(input) = &mut self.input {
@@ -1314,7 +1425,13 @@ impl App {
                 if self.help && inside(self.help_area) {
                     self.help_scroll = self.help_scroll.saturating_add_signed(step);
                 } else if inside(self.explorer_rows) {
-                    self.tree.down(step);
+                    match self.explorer_search.as_mut() {
+                        Some(search) => {
+                            let last = search.hits.len().saturating_sub(1);
+                            search.selected = search.selected.saturating_add_signed(step).min(last);
+                        }
+                        None => self.tree.down(step),
+                    }
                 } else if let Some((id, rect)) = pane {
                     self.wheel(id, rect, up, at)?;
                 }
@@ -1324,7 +1441,17 @@ impl App {
                     return Ok(());
                 }
                 self.close_find();
-                if inside(self.explorer_rows) {
+                if inside(self.explorer_rows) && self.explorer_search.is_some() {
+                    let row = usize::from(at.1 - self.explorer_rows.y);
+                    if let Some(Some(hit)) = self.search_lines.get(row).copied() {
+                        if let Some(search) = self.explorer_search.as_mut() {
+                            search.selected = hit;
+                        }
+                        self.sidebar_focus = true;
+                        self.git_focus = false;
+                        return self.show_hit(false);
+                    }
+                } else if inside(self.explorer_rows) {
                     let index = self.tree.offset + usize::from(at.1 - self.explorer_rows.y);
                     if index < self.tree.entries.len() {
                         self.tree.selected = index;
@@ -2385,6 +2512,18 @@ impl App {
         }
     }
     fn sidebar_key(&mut self, key: KeyEvent) -> Result<()> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if !self.git_focus {
+            if ctrl && key.code == KeyCode::Char('f') {
+                if self.explorer_search.is_none() {
+                    self.explorer_search = Some(search::Search::new(String::new()));
+                }
+                return Ok(());
+            }
+            if self.explorer_search.is_some() {
+                return self.explorer_search_key(key);
+            }
+        }
         if key.code == KeyCode::Tab {
             self.git_focus = !self.git_focus;
             return Ok(());
@@ -4108,6 +4247,51 @@ mod tests {
         press(&mut app, KeyCode::Char('A'), KeyModifiers::NONE);
         keys(&mut app, "(\n");
         assert!(app.buffers[id].text.to_string().contains("    (\n    \n"));
+    }
+    #[test]
+    fn ctrl_f_in_the_explorer_finds_names_and_text_in_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/main.py"),
+            "import os\n\ndef main():\n    total = count(1)\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("counter.txt"), "nothing\n").unwrap();
+        let mut app = App::new(root.clone(), Some(root.join("counter.txt")), false).unwrap();
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
+        for c in "count".chars() {
+            press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        let start = Instant::now();
+        while app.explorer_search.as_ref().unwrap().running
+            && start.elapsed() < Duration::from_secs(10)
+        {
+            app.tick();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let shown = screen(&mut app, 120, 30).join("\n");
+        assert!(
+            shown.contains("SEARCH") && shown.contains("2 results in 2 files"),
+            "{shown}"
+        );
+        assert!(shown.contains("total = count(1)"));
+        // Down previews the line; Enter opens it with the cursor on the match.
+        press(&mut app, KeyCode::Down, KeyModifiers::NONE);
+        assert!(app.sidebar_focus, "previewing keeps the explorer focused");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert!(!app.sidebar_focus);
+        let b = &app.buffers[app.buffer_id().unwrap()];
+        assert!(b.name().contains("main.py"));
+        assert_eq!((b.row, b.col, b.search.as_str()), (3, 12, "count"));
+        // Back in the explorer, the search is still there; Esc returns to the tree.
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(screen(&mut app, 120, 30).join("\n").contains("SEARCH"));
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.explorer_search.is_none());
+        assert!(screen(&mut app, 120, 30).join("\n").contains("EXPLORER"));
     }
     #[test]
     fn find_and_replace_like_vscode() {

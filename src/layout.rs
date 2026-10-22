@@ -102,6 +102,75 @@ impl Tile {
         }
     }
 
+    /// Exchange two panes' places.
+    pub fn swap(&mut self, a: usize, b: usize) {
+        match self {
+            Self::Leaf(id) if *id == a => *id = b,
+            Self::Leaf(id) if *id == b => *id = a,
+            Self::Leaf(_) => {}
+            Self::Split { first, second, .. } => {
+                first.swap(a, b);
+                second.swap(a, b);
+            }
+        }
+    }
+
+    /// Turn the split holding `target` between side by side and stacked.
+    pub fn flip(&mut self, target: usize) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split {
+                axis,
+                first,
+                second,
+                ..
+            } => {
+                if first.flip(target) || second.flip(target) {
+                    return true;
+                }
+                let holds = |t: &Tile| matches!(t, Self::Leaf(id) if *id == target);
+                if holds(first) || holds(second) {
+                    *axis = match axis {
+                        Axis::Horizontal => Axis::Vertical,
+                        Axis::Vertical => Axis::Horizontal,
+                    };
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
+    /// Move `target` out to one whole side of the layout (`last`: right or bottom),
+    /// the rest keeping the other side. False when it's already there, or alone.
+    pub fn move_to_side(&mut self, target: usize, axis: Axis, last: bool) -> bool {
+        if let Self::Split {
+            axis: a,
+            first,
+            second,
+            ..
+        } = self
+        {
+            let edge = if last { second } else { first };
+            if *a == axis && matches!(**edge, Self::Leaf(id) if id == target) {
+                return false;
+            }
+        }
+        if !self.remove(target) {
+            return false;
+        }
+        let rest = Box::new(std::mem::replace(self, Self::Leaf(target)));
+        let moved = Box::new(Self::Leaf(target));
+        let (first, second) = if last { (rest, moved) } else { (moved, rest) };
+        *self = Self::Split {
+            axis,
+            percent: 50,
+            first,
+            second,
+        };
+        true
+    }
+
     pub fn resize(&mut self, target: usize, axis: Axis, delta: i16) -> bool {
         match self {
             Self::Leaf(_) => false,

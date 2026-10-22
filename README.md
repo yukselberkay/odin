@@ -246,6 +246,8 @@ panes; a **horizontal split** creates top/bottom panes.
 | Stacked editor panes | `Ctrl-b "` | `:split` |
 | Shell below the active pane | `Ctrl-b c` | `:term` |
 | Shell beside the active pane | `Ctrl-b C` | `:term right` |
+| Move the pane (swap, or to a whole side) | `Ctrl-b Shift-arrows` / `H J K L` | `:move right` |
+| Side by side ↔ stacked | `Ctrl-b Space` | `:flip` |
 
 Splits nest inside the focused pane. Splitting an editor initially shows the
 same buffer in both views; use `:e another-file` in the new view to open something
@@ -337,6 +339,8 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-b %` / `Ctrl-b "` | Side-by-side / stacked editor split |
 | `Ctrl-b arrows` or `Ctrl-b h/j/k/l` | Move between panes |
 | `Ctrl-b Ctrl-arrows` | Resize the closest split on that axis |
+| `Ctrl-b Shift-arrows` or `Ctrl-b H/J/K/L` | Move the pane: it trades places with the pane on that side, or, at the edge already, takes that whole side of the window (`:move right`) |
+| `Ctrl-b Space` | Flip the pane's split between side by side and stacked (`:flip`) |
 | `Ctrl-b o` | Cycle panes |
 | `Ctrl-b c` / `Ctrl-b C` | New terminal below / beside |
 | `Ctrl-b a` / `Ctrl-b A` | New AI launcher beside / below; 1 Codex, 2 Claude, 3 Gemini, 4 Antigravity |

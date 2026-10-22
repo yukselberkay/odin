@@ -1852,6 +1852,16 @@ impl App {
                     t.send(&[2])?;
                 }
             }
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                self.move_pane(key.code)
+            }
+            KeyCode::Char('H') => self.move_pane(KeyCode::Left),
+            KeyCode::Char('L') => self.move_pane(KeyCode::Right),
+            KeyCode::Char('K') => self.move_pane(KeyCode::Up),
+            KeyCode::Char('J') => self.move_pane(KeyCode::Down),
+            KeyCode::Char(' ') => self.flip_split(),
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     let axis = if matches!(key.code, KeyCode::Left | KeyCode::Right) {
@@ -1880,7 +1890,7 @@ impl App {
             }
             KeyCode::Esc => {}
             _ => self.notice(
-                "Ctrl-b: % split · \" stack · c shell below · C beside · a AI · arrows focus · ? help",
+                "Ctrl-b: % split · \" stack · c shell below · C beside · a AI · arrows focus · ⇧arrows move · ? help",
             ),
         }
         Ok(())
@@ -1909,9 +1919,15 @@ impl App {
     /// a wide pane below is never "right"; among several, the nearest, then the one
     /// level with the focused pane's middle.
     fn move_focus(&mut self, direction: KeyCode) {
-        let Some(&(_, current)) = self.rectangles.iter().find(|(id, _)| *id == self.focused) else {
-            return;
-        };
+        if let Some(id) = self.neighbor(direction) {
+            self.focused = id;
+            self.sidebar_focus = false;
+            self.mode = Mode::Normal;
+        }
+    }
+    /// The pane next to the focused one on that side (see [`move_focus`]).
+    fn neighbor(&self, direction: KeyCode) -> Option<usize> {
+        let &(_, current) = self.rectangles.iter().find(|(id, _)| *id == self.focused)?;
         let span = |start: u16, size: u16| (start as i32, start as i32 + size as i32);
         let (left, right) = span(current.x, current.width);
         let (top, bottom) = span(current.y, current.height);
@@ -1956,10 +1972,41 @@ impl App {
                 best = Some((id, score));
             }
         }
-        if let Some((id, _)) = best {
-            self.focused = id;
-            self.sidebar_focus = false;
-            self.mode = Mode::Normal;
+        best.map(|(id, _)| id)
+    }
+    /// Ctrl-b Shift+arrow (or H J K L): move the focused pane that way. With a pane
+    /// on that side, the two trade places; at the edge already, it takes the whole
+    /// side of the window (a terminal below two editors moves to a full-height
+    /// column on the right).
+    fn move_pane(&mut self, direction: KeyCode) {
+        if self.panes.len() < 2 {
+            return self.notice("Only one pane");
+        }
+        if self.zoom {
+            return self.notice("Ctrl-b z first: the pane is maximized");
+        }
+        if let Some(other) = self.neighbor(direction) {
+            self.tiles.swap(self.focused, other);
+        } else {
+            let axis = match direction {
+                KeyCode::Left | KeyCode::Right => Axis::Horizontal,
+                _ => Axis::Vertical,
+            };
+            let last = matches!(direction, KeyCode::Right | KeyCode::Down);
+            if !self.tiles.move_to_side(self.focused, axis, last) {
+                return self.notice("Already there");
+            }
+        }
+        self.sidebar_focus = false;
+        self.notice("Pane moved · Ctrl-b Shift+arrows move it on · Ctrl-b Space flips");
+    }
+    /// Ctrl-b Space: turn the focused pane's split between side by side and stacked.
+    fn flip_split(&mut self) {
+        if self.tiles.flip(self.focused) {
+            self.zoom = false;
+            self.notice("Split flipped");
+        } else {
+            self.notice("Only one pane");
         }
     }
     fn sidebar_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -3196,6 +3243,18 @@ impl App {
                 self.notice("Explorer: selected folder expanded, with everything inside");
             }
             // :zoom in / out / reset changes the text size; bare :zoom maximizes the pane.
+            // :move left|right|up|down, :flip
+            "move" => {
+                let direction = match arg {
+                    "left" => KeyCode::Left,
+                    "right" => KeyCode::Right,
+                    "up" => KeyCode::Up,
+                    "down" => KeyCode::Down,
+                    _ => bail!("Use :move left, right, up or down"),
+                };
+                self.move_pane(direction);
+            }
+            "flip" => self.flip_split(),
             "noh" | "nohlsearch" => {
                 if let Some(b) = self.active_buffer() {
                     b.search.clear();
@@ -3998,6 +4057,50 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert_eq!(go(below, KeyCode::Right), below);
         assert_eq!(go(below, KeyCode::Left), below);
         assert!([top_left, top_right].contains(&go(below, KeyCode::Up)));
+    }
+    #[test]
+    fn panes_move_swap_and_flip_after_they_are_made() {
+        // Two panes on top (a, b), one full-width pane below (c).
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        let a = app.focused;
+        app.split_editor(Axis::Vertical).unwrap();
+        let c = app.focused;
+        app.focused = a;
+        app.split_editor(Axis::Horizontal).unwrap();
+        let b = app.focused;
+        app.focused = c;
+        let area = Rect::new(0, 0, 120, 40);
+        let at = |app: &mut App, id| {
+            app.rectangles.clear();
+            app.tiles.rectangles(area, &mut app.rectangles);
+            app.rectangles.iter().find(|(i, _)| *i == id).unwrap().1
+        };
+        let prefix = |app: &mut App, code, modifiers| {
+            press(app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+            press(app, code, modifiers);
+        };
+        // Nothing to its right: the bottom pane becomes a full-height right column.
+        at(&mut app, c);
+        prefix(&mut app, KeyCode::Right, KeyModifiers::SHIFT);
+        let (ra, rb, rc) = (at(&mut app, a), at(&mut app, b), at(&mut app, c));
+        assert_eq!(rc.height, area.height, "full height");
+        assert!(rc.x > rb.x && rb.x > ra.x, "a | b | c");
+        assert_eq!(app.focused, c, "the moved pane keeps focus");
+        prefix(&mut app, KeyCode::Right, KeyModifiers::SHIFT);
+        assert!(app.message.contains("Already there"));
+        // With a pane on that side, they trade places (H J K L work too).
+        prefix(&mut app, KeyCode::Char('H'), KeyModifiers::SHIFT);
+        assert!(at(&mut app, c).x < at(&mut app, b).x, "a | c | b");
+        // Ctrl-b Space: c's split with a turns from side by side to stacked.
+        prefix(&mut app, KeyCode::Char(' '), KeyModifiers::NONE);
+        let (ra, rc) = (at(&mut app, a), at(&mut app, c));
+        assert_eq!(ra.x, rc.x);
+        assert!(rc.y > ra.y, "a above c");
+        app.command("move up").unwrap();
+        assert!(at(&mut app, c).y < at(&mut app, a).y, "c above a");
+        assert!(app.command("move sideways").is_err());
+        assert_eq!(app.panes.len(), 3);
     }
     #[test]
     fn terminals_open_below_or_beside_the_active_pane() {

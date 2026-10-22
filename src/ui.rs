@@ -1943,7 +1943,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         } else if app.copy.is_some() {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus {
             " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(v)) if v.diff.is_some())
@@ -2030,6 +2030,11 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ("Ctrl-b % / \"", "Split side-by-side / top-and-bottom"),
         ("Ctrl-b arrows / h j k l", "Focus adjacent pane; o cycles"),
         ("Ctrl-b Ctrl-arrows", "Resize a split"),
+        (
+            "Ctrl-b Shift-arrows / HJKL",
+            "Move the pane: swap, or take that whole side",
+        ),
+        ("Ctrl-b Space", "Flip split: side by side ↔ stacked"),
         ("Ctrl-b c / C", "New shell below / beside; :term right"),
         (
             "Ctrl-b a / A",

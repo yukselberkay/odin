@@ -1395,8 +1395,18 @@ impl App {
                     Ok(())
                 } else if let Some(Pane::Terminal(terminal)) = self.panes.get_mut(&self.focused) {
                     terminal.paste(&text)
+                } else if let Some((start, end)) = self.selection() {
+                    // The terminal's paste (⌘V, Ctrl-Shift-V, Windows Terminal's Ctrl-V)
+                    // replaces a selection, like Ctrl-v does.
+                    let text = text.replace("\r\n", "\n");
+                    if let Some(b) = self.active_buffer() {
+                        b.replace(start, end, &text);
+                        b.end_group();
+                    }
+                    self.end_visual();
+                    Ok(())
                 } else if let Some(b) = self.active_buffer() {
-                    // Terminal paste (Ctrl-Shift-V) inserts at the cursor in any mode.
+                    // Terminal paste inserts at the cursor in any mode.
                     b.insert(&text.replace("\r\n", "\n"));
                     b.end_group();
                     Ok(())
@@ -4624,6 +4634,34 @@ mod tests {
         assert_eq!(app.buffers[id].row, 1);
         app.command("noh").unwrap();
         assert!(app.buffers[id].search.is_empty());
+    }
+    #[test]
+    fn the_terminals_paste_replaces_a_selection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "keep old text\n").unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let id = app.buffer_id().unwrap();
+        // Shift-select "old" in insert mode, then paste with the terminal (⌘V).
+        press(&mut app, KeyCode::Char('i'), KeyModifiers::NONE);
+        app.buffers[id].col = 5;
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Right, KeyModifiers::SHIFT);
+        }
+        app.event(Event::Paste("new".into()));
+        assert_eq!(app.buffers[id].text.to_string(), "keep new text\n");
+        assert_eq!(app.mode, Mode::Insert, "back to typing");
+        // v in normal mode too; no selection, it inserts at the cursor.
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        app.buffers[id].col = 0;
+        press(&mut app, KeyCode::Char('v'), KeyModifiers::NONE);
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE);
+        }
+        app.event(Event::Paste("save".into()));
+        assert_eq!(app.buffers[id].text.to_string(), "save new text\n");
+        app.event(Event::Paste("!".into()));
+        assert!(app.buffers[id].text.to_string().contains('!'));
     }
     #[test]
     fn copy_cut_paste_with_selection_lines_and_shift_arrows() {

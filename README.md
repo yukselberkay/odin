@@ -691,8 +691,9 @@ the terminal's OSC 52, which most terminals support, even over SSH).
 | Escape | Cancel the selection |
 
 A Shift-selection made while typing behaves like any text field: typing replaces it
-and a plain arrow cancels it. Your terminal's own paste (often `Ctrl-Shift-V`)
-also works in any mode and inserts at the cursor.
+and a plain arrow cancels it. Your terminal's own paste (⌘V on a Mac, `Ctrl-Shift-V` on Linux, `Ctrl-V` in
+Windows Terminal) also works in any mode: it inserts at the cursor, or replaces the
+selection.
 
 ### Mouse
 

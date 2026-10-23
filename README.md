@@ -1199,7 +1199,41 @@ plugins are intentionally not part of v0.1.
 | Custom theme not found | Use a simple name with letters, digits, hyphens or underscores, and place its TOML in the user themes directory. |
 
 Clean buffers refresh after external edits; buffers with unsaved changes do not.
-Odin does not provide automatic crash recovery or persistent pane layouts in v0.1.
+Odin does not provide automatic crash recovery in v0.1.
+
+### macOS, Linux and Windows
+
+Odin works the same on all three; where the systems differ, each gets its own way:
+
+| Feature | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Clipboard | `pbcopy` / `pbpaste` | `wl-copy` (Wayland), `xclip` / `xsel` (X11) | PowerShell |
+| Clipboard fallback (SSH, none of the above) | OSC 52 | OSC 52 | OSC 52 |
+| `odin FILE` from a terminal pane | private socket | private socket | local port with a secret |
+| AI-finished chime | Glass (`afplay`) | desktop "complete" sound (`paplay`, `pw-play`) | notify sound (PowerShell) |
+| Shells reopen in their last folder | yes | yes | in the project folder (Windows can't tell another program's folder) |
+| Odin's font while it runs | macOS Terminal switches the tab | set it in your terminal or `:font` | set it in your terminal |
+| Text size `Ctrl-b + - 0` | Terminal.app, xterm, kitty; others: Cmd-+ / Cmd-- | xterm, kitty; others: Ctrl-+ / Ctrl-- | Windows Terminal: Ctrl-+ / Ctrl-- |
+| Terminal's copy key (shown in hints) | ⌘C | Ctrl-Shift-C | Ctrl-Shift-C |
+| AI skill for agents | linked | linked | copied (links need extra rights) |
+| One-step install | `scripts/install.sh` | `scripts/install.sh` | [Windows](#windows) section |
+
+Some keys never reach Odin because the system or the terminal keeps them. Each has
+another way in:
+
+| Key | Kept by | Use instead |
+| --- | --- | --- |
+| Ctrl+arrows (`Ctrl-b Ctrl-arrows` resize) | macOS (switching desktops) | `Ctrl-b r`, then arrows |
+| Ctrl-Space (completion) | macOS and fcitx/ibus (switching keyboard languages) | `Ctrl-n`; suggestions also pop up by themselves |
+| Cmd+arrows (line start/end) | macOS Terminal | Fn+Shift+←/→ (Home/End) |
+| F1 (guide) | GNOME Terminal, Konsole (their help) | `Ctrl-b ?` |
+| Shift+←/→ (select) | Konsole (switching tabs) | `v` / `V`, Shift+Option/Alt+←/→ |
+| `Ctrl-b Shift-arrows` (move a pane) | Konsole (Shift+←/→) | `Ctrl-b H J K L` |
+| Alt+←/→ (word left/right) | Windows Terminal (moving between its panes) | Ctrl+←/→ |
+| Ctrl-V (paste) | Windows Terminal (its own paste) | works the same: the paste replaces a selection |
+| Mouse drag (select) | Odin, while it has the mouse | `Ctrl-b y` or `Ctrl-b Z` |
+
+`odin --keys` shows exactly what your terminal sends, to check any other shortcut.
 
 ## Design and boundaries
 

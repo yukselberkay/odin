@@ -512,10 +512,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.input.is_none() && app.find.is_none() {
         if let Some(at) = app.cursor_at.filter(|_| app.buffer_id().is_some()) {
-            if app.menu.is_some() {
-                completion_menu(frame, app, at, area);
+            let pane = app
+                .rectangles
+                .iter()
+                .find(|(id, _)| *id == app.focused)
+                .map(|&(_, r)| {
+                    Rect::new(
+                        r.x + 1,
+                        r.y + 1,
+                        r.width.saturating_sub(2),
+                        r.height.saturating_sub(2),
+                    )
+                });
+            if let (Some(pane), true) = (pane, app.menu.is_some()) {
+                completion_menu(frame, app, at, pane);
             } else if let Some(hover) = &app.hover {
-                hover_popup(frame, app, hover, at, area);
+                // Docs (K) may use the whole screen, short of the top and bottom bars.
+                let screen = Rect::new(
+                    area.x,
+                    area.y + 1,
+                    area.width,
+                    area.height.saturating_sub(3),
+                );
+                hover_popup(frame, app, hover, at, screen);
             }
         }
     }
@@ -1415,13 +1434,19 @@ fn severity_color(theme: &Theme, severity: u8) -> Color {
     }
 }
 
-/// Place a popup of `width`×`height` below the cursor, or above it when there is no room.
-fn popup_rect(at: (u16, u16), width: u16, height: u16, screen: Rect) -> Rect {
-    let width = width.min(screen.width.saturating_sub(2));
-    let x = at.0.min(screen.right().saturating_sub(width + 1));
-    // Leave the two footer rows visible.
-    let below = screen.bottom().saturating_sub(at.1 + 3);
-    let above = at.1.saturating_sub(screen.y + 1);
+/// Rows free below and above the cursor row inside `bounds`.
+fn popup_room(at: (u16, u16), bounds: Rect) -> (u16, u16) {
+    let below = bounds.bottom().saturating_sub(at.1 + 1);
+    let above = at.1.saturating_sub(bounds.y);
+    (below, above)
+}
+
+/// Place a popup of `width`×`height` below the cursor, or above it when there is
+/// more room there, never outside `bounds`.
+fn popup_rect(at: (u16, u16), width: u16, height: u16, bounds: Rect) -> Rect {
+    let width = width.min(bounds.width);
+    let x = at.0.max(bounds.x).min(bounds.right().saturating_sub(width));
+    let (below, above) = popup_room(at, bounds);
     if below >= height || below >= above {
         Rect::new(x, at.1 + 1, width, height.min(below))
     } else {
@@ -1430,26 +1455,43 @@ fn popup_rect(at: (u16, u16), width: u16, height: u16, screen: Rect) -> Rect {
     }
 }
 
-fn completion_menu(frame: &mut Frame, app: &App, at: (u16, u16), screen: Rect) {
+/// The completion list, inside the pane being typed in: it never covers another
+/// pane, and one that pops up by itself stays small.
+fn completion_menu(frame: &mut Frame, app: &App, at: (u16, u16), pane: Rect) {
     let Some(menu) = &app.menu else {
         return;
     };
     let theme = &app.theme;
-    let rows = menu.shown.len().min(10);
+    let (below, above) = popup_room(at, pane);
+    let most = if menu.auto { 6 } else { 10 };
+    let rows = menu
+        .shown
+        .len()
+        .min(most)
+        .min(usize::from(below.max(above).saturating_sub(2)));
+    if rows == 0 || pane.width < 12 {
+        return;
+    }
     let top = menu.selected.saturating_sub(rows - 1);
     let visible = &menu.shown[top..top + rows];
-    let label_width = visible
+    let mut label_width = visible
         .iter()
         .map(|&i| menu.items[i].label.chars().count())
         .max()
         .unwrap_or(0)
         .clamp(8, 40);
-    let detail_width = visible
+    let mut detail_width = visible
         .iter()
         .map(|&i| menu.items[i].detail.chars().count())
         .max()
         .unwrap_or(0)
         .min(36);
+    // Narrow pane: the details give way first, then the labels.
+    let room = usize::from(pane.width).saturating_sub(5);
+    if label_width + detail_width > room {
+        detail_width = room.saturating_sub(label_width);
+        label_width = label_width.min(room);
+    }
     let width = (label_width + detail_width + 5) as u16;
     // Align the list with the start of the word being completed.
     let b = &app.buffers[menu.buffer];
@@ -1458,7 +1500,7 @@ fn completion_menu(frame: &mut Frame, app: &App, at: (u16, u16), screen: Rect) {
         (at.0.saturating_sub(shift + 1), at.1),
         width,
         rows as u16 + 2,
-        screen,
+        pane,
     );
     frame.render_widget(Clear, rect);
     let block = panel(

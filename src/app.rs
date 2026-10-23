@@ -4589,6 +4589,60 @@ mod tests {
         assert_eq!(labels(&app), vec!["totalCount"]);
     }
     #[test]
+    fn suggestions_stay_inside_the_pane_being_typed_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.py");
+        let words = "print_report_for_every_customer = 1\nprinted_values = 2\nprint_header = 3\n";
+        std::fs::write(&path, format!("{words}    \n")).unwrap();
+        let mut app = App::new(dir.path().into(), Some(path), false).unwrap();
+        let left = app.focused;
+        app.split_editor(Axis::Horizontal).unwrap();
+        let right = app.focused;
+        let other = dir.path().join("other.txt");
+        std::fs::write(&other, "another file\n").unwrap();
+        app.open(&other).unwrap();
+        app.focused = left;
+        let id = app.buffer_id().unwrap();
+        // The cursor sits far right in the narrow left pane.
+        app.buffers[id].row = 3;
+        app.buffers[id].col = 4;
+        press(&mut app, KeyCode::Char('A'), KeyModifiers::NONE);
+        let (width, height) = (90, 20);
+        let before = screen(&mut app, width, height);
+        let pane = |app: &App, id| app.rectangles.iter().find(|(i, _)| *i == id).unwrap().1;
+        let (l, r) = (pane(&app, left), pane(&app, right));
+        for c in "x = 1 + pr".chars() {
+            press(&mut app, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        let menu = app.menu.as_ref().expect("suggestions popped up");
+        assert!(menu.auto && menu.shown.len() >= 3);
+        let count = menu.shown.len();
+        let after = screen(&mut app, width, height);
+        let columns = |row: &str, from: u16, to: u16| -> String {
+            row.chars()
+                .skip(from as usize)
+                .take((to - from) as usize)
+                .collect()
+        };
+        // The other pane looks exactly as it did; the list is inside the left one.
+        for y in 0..height as usize {
+            assert_eq!(
+                columns(&before[y], r.x, r.right()),
+                columns(&after[y], r.x, r.right()),
+                "row {y}"
+            );
+        }
+        let shown = after.join("\n");
+        assert!(shown.contains("print_"), "{shown}");
+        let title = format!("╭ 1/{count}");
+        assert!(
+            after
+                .iter()
+                .any(|row| columns(row, l.x, l.right()).contains(&title)),
+            "{shown}"
+        );
+    }
+    #[test]
     fn find_and_replace_like_vscode() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("main.js");

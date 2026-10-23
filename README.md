@@ -677,7 +677,9 @@ Ctrl-Space for switching keyboard languages when you have more than one). Up/Dow
 choose, **Tab** accepts, Escape closes the list, and typing keeps filtering it. Enter
 accepts a suggestion you picked with Up/Down (or one you asked for); otherwise it
 starts a new line, so a list that popped up never eats a newline.
-`autocomplete = false` keeps it to `Ctrl-Space` and `.`.
+The list stays inside the pane you're typing in, never over another, and one that
+pops up by itself shows at most six suggestions. `autocomplete = false` keeps it to
+`Ctrl-Space` and `.`.
 
 Mac-style moves work in insert and normal mode, as far as your terminal passes the
 keys on (`odin --keys` shows what arrives; a key that prints nothing never reaches

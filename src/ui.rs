@@ -793,11 +793,12 @@ pub(crate) fn mark_color(mark: Mark, theme: &Theme) -> Color {
 /// The explorer's key hint: the longest wording that fits, never cut off.
 fn explorer_hint(width: usize) -> &'static str {
     [
-        " ←→ fold  c/E all  r refresh",
-        " ←→ fold c/E all r refresh",
-        " ←→ fold  c/E all  r ↻",
-        " ←→ fold  r refresh",
-        " ←→ fold",
+        " ^F search  ←→ fold  c/E all  r refresh",
+        " ^F search  ←→ fold  c/E all  r ↻",
+        " ^F search  ←→ fold  c/E all",
+        " ^F search ←→ fold c/E all",
+        " ^F search  ←→ fold",
+        " ^F search",
     ]
     .into_iter()
     .find(|hint| hint.chars().count() <= width)
@@ -2302,7 +2303,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         } else if app.sidebar_focus && !app.git_focus && app.explorer_search.is_some() {
             " type to search names and text   ↑ ↓ preview   Enter open at the line   ^U clear   Esc back to the tree"
         } else if app.sidebar_focus && !app.git_focus {
-            " j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
+            " ^F search files   j k move   → expand/open   ← collapse   space fold   c collapse all   E expand all   Enter open   n new   Esc back"
         } else if matches!(app.panes.get(&app.focused), Some(Pane::Git(v)) if v.diff.is_some())
             && !app.sidebar_focus
         {
@@ -2318,7 +2319,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
                 Mode::Visual | Mode::VisualLine => {
                     " move to extend   y/^C copy   d/^X cut   p/^V replace   c change   Esc cancel"
                 }
-                _ => " ^S save  ^C ^X ^V copy/cut/paste  v select  ^E files  ^P open  ^B panes  F1 help  ^Q quit",
+                _ => " ^S save  ^F find  ^C ^X ^V copy/cut/paste  v select  ^E files  ^P open  ^B panes  F1 help  ^Q quit",
             }
         };
         text(
@@ -2645,8 +2646,9 @@ mod tests {
         for width in 0..40 {
             assert!(super::explorer_hint(width).chars().count() <= width);
         }
-        // The default sidebar (29 columns, 27 inside the border) keeps every word.
-        assert_eq!(super::explorer_hint(27), " ←→ fold c/E all r refresh");
+        // The default sidebar (29 columns, 27 inside the border) names search, fold
+        // and collapse / expand all; the status line has the rest.
+        assert_eq!(super::explorer_hint(27), " ^F search ←→ fold c/E all");
     }
 
     use super::*;

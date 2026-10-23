@@ -871,7 +871,10 @@ terminal window — and later run `odin` in the same project, you get back:
 - AI panes back in their conversation. Each Claude Code pane is started with its own
   conversation id (`--session-id`) and reopens exactly that conversation
   (`--resume <id>`), even with several Claude panes or other Claude sessions in the
-  same folder; a pane that never got a message starts fresh under the same id.
+  same folder. If you switch conversations inside the pane (`/resume`, `/clear`, a
+  fork), Odin follows: it reads which conversation the pane's Claude is in from
+  Claude's own registry (`~/.claude/sessions/<pid>.json`) whenever it saves, and
+  reopens that one. A pane that never got a message starts fresh under the same id.
   Codex (`resume --last`), Gemini (`--resume latest`) and Antigravity (`--continue`)
   cannot be pinned to an id, so they reopen their latest conversation in the
   project. Other launchers restart below their previous output. Claude panes from a

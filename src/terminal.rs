@@ -185,6 +185,13 @@ impl TerminalPane {
             finished: false,
         })
     }
+    /// The program's process id while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        if self.exited.is_some() {
+            return None;
+        }
+        self.child.process_id()
+    }
     /// Bring the session snapshot up to date; cheap when nothing was printed since.
     pub fn snapshot(&mut self) {
         if self.saved.is_none() || self.output.swap(false, Ordering::Relaxed) {

@@ -216,16 +216,35 @@ fn conversation_id() -> String {
 /// `<config>/projects/<project>/<id>.jsonl`, config being `$CLAUDE_CONFIG_DIR` or
 /// `~/.claude`.
 fn claude_conversation_exists(id: &str) -> bool {
-    let base = std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude")));
-    let Some(Ok(projects)) = base.map(|b| std::fs::read_dir(b.join("projects"))) else {
+    let Some(Ok(projects)) = claude_home().map(|b| std::fs::read_dir(b.join("projects"))) else {
         return false;
     };
     let file = format!("{id}.jsonl");
     projects
         .flatten()
         .any(|project| project.path().join(&file).is_file())
+}
+
+/// Claude Code's own directory: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
+fn claude_home() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| directories::BaseDirs::new().map(|d| d.home_dir().join(".claude")))
+}
+
+/// The conversation a running Claude Code is in right now. It keeps a registry
+/// entry per process, `<home>/sessions/<pid>.json`, whose `sessionId` follows
+/// `/resume`, `/clear` and forks, unlike the id the pane was started with.
+fn claude_live_conversation(home: &Path, pid: u32) -> Option<String> {
+    let text = std::fs::read_to_string(home.join("sessions").join(format!("{pid}.json"))).ok()?;
+    let entry: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // The entry must be this process's, not one left by an earlier one.
+    if entry.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(pid)) {
+        return None;
+    }
+    let id = entry.get("sessionId")?.as_str()?;
+    let well_formed = id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+    well_formed.then(|| id.to_string())
 }
 
 pub struct App {
@@ -970,12 +989,34 @@ impl App {
                 terminal.snapshot();
             }
         }
+        if let Some(home) = claude_home() {
+            self.follow_conversations(&home);
+        }
         let json = serde_json::to_string(&self.session())?;
         if json != self.session_json || force {
             session::save(&self.root, &json)?;
             self.session_json = json;
         }
         Ok(())
+    }
+    /// Pin each Claude Code pane to the conversation it's in now, so a restored pane
+    /// reopens that one even after you switched with /resume or /clear in it.
+    fn follow_conversations(&mut self, home: &Path) {
+        for pane in self.panes.values_mut() {
+            let Pane::Terminal(terminal) = pane else {
+                continue;
+            };
+            let Some(pid) = terminal.pid() else {
+                continue;
+            };
+            if let Launch::Agent { name, session, .. } = &mut terminal.launch {
+                if name == "claude" {
+                    if let Some(id) = claude_live_conversation(home, pid) {
+                        *session = Some(id);
+                    }
+                }
+            }
+        }
     }
     /// Reopen this project's saved session, if any. Problems are reported, never fatal.
     pub fn restore_session(&mut self) {
@@ -5701,6 +5742,75 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         }
         let ignore = std::fs::read_to_string(dir.path().join(".odin/.gitignore")).unwrap();
         assert!(ignore.contains('*'));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn claude_panes_follow_the_conversation_they_switched_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("claude-home");
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.open_terminal(
+            Some(("/bin/sh", vec!["-c".into(), "exec sleep 30".into()])),
+            Some(Axis::Horizontal),
+        )
+        .unwrap();
+        let pane = app.focused;
+        let started = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let switched = "6e0449c2-4ca3-4fde-a7c1-23fda501b633";
+        let Some(Pane::Terminal(t)) = app.panes.get_mut(&pane) else {
+            unreachable!()
+        };
+        t.launch = Launch::Agent {
+            name: "claude".into(),
+            model: None,
+            session: Some(started.into()),
+        };
+        let pid = t.pid().unwrap();
+        let pinned = |app: &App| match app.session().panes.into_iter().find(|(id, _)| *id == pane) {
+            Some((
+                _,
+                SavedPane::Terminal {
+                    launch: Launch::Agent { session, .. },
+                    ..
+                },
+            )) => session,
+            _ => None,
+        };
+        let entry = |pid: u32, id: &str| {
+            std::fs::write(
+                home.join("sessions").join(format!("{pid}.json")),
+                format!(r#"{{"pid": {pid}, "sessionId": "{id}", "kind": "interactive"}}"#),
+            )
+            .unwrap();
+        };
+        // No registry entry yet: the pane keeps the id it started with.
+        app.follow_conversations(&home);
+        assert_eq!(pinned(&app).as_deref(), Some(started));
+        // You /resume'd another conversation in the pane: Claude's registry says so.
+        entry(pid, switched);
+        app.follow_conversations(&home);
+        assert_eq!(pinned(&app).as_deref(), Some(switched));
+        // ...and that is what the pane reopens next time.
+        let (args, _, _) = agent_flags(
+            "claude",
+            true,
+            pinned(&app).as_deref(),
+            &|_| true,
+            &String::new,
+        );
+        assert_eq!(args, ["--resume", switched]);
+        // An entry left by another process, or a malformed id, is ignored.
+        std::fs::write(
+            home.join("sessions").join(format!("{pid}.json")),
+            format!(r#"{{"pid": {}, "sessionId": "{started}"}}"#, pid + 1),
+        )
+        .unwrap();
+        app.follow_conversations(&home);
+        assert_eq!(pinned(&app).as_deref(), Some(switched));
+        entry(pid, "not-an-id");
+        app.follow_conversations(&home);
+        assert_eq!(pinned(&app).as_deref(), Some(switched));
     }
     #[test]
     fn claude_panes_reopen_exactly_their_own_conversation() {

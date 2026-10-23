@@ -851,9 +851,10 @@ relative to the shell's current directory.
 - `odin DIR` (or bare `odin`) for a folder of this project shows it in the explorer.
   A folder of another project, or `odin --nested FILE`, starts a separate Odin as before.
 
-Odin listens on a socket in a private temporary directory (mode `0700`, removed
-when Odin exits) and passes its path to every terminal pane as `ODIN_SOCKET`.
-On Windows, `odin` in a terminal pane still starts a separate Odin.
+On macOS and Linux, Odin listens on a socket in a private temporary directory (mode
+`0700`, removed when Odin exits) and passes its path to every terminal pane as
+`ODIN_SOCKET`. On Windows it listens on a local port (127.0.0.1 only) and hands its
+panes a random secret with the port; a request without it is turned away.
 
 ### Sessions
 

@@ -1,5 +1,8 @@
 use crate::{config, editor::Buffer};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 use syntect::{
     highlighting::{
         Color, HighlightIterator, HighlightState, Highlighter, Style, StyleModifier, Theme,
@@ -14,6 +17,18 @@ pub struct Cached {
     parse: ParseState,
     state: HighlightState,
     pub lines: Vec<Vec<(Style, String)>>,
+    /// The parser's state at the start of each highlighted line, and a hash of the
+    /// line, so an edit is highlighted again from its first changed line only.
+    starts: Vec<(ParseState, HighlightState)>,
+    hashes: Vec<u64>,
+}
+
+fn line_hash(line: ropey::RopeSlice) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for chunk in line.chunks() {
+        chunk.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 pub struct Syntax {
@@ -88,8 +103,30 @@ impl Syntax {
             .map(|s| s.name.clone())
             .unwrap_or_else(|| "Plain text".into())
     }
+    /// Highlight `buffer` down to line `end`, a bounded amount per call; true when
+    /// there's more to do. After an edit only the lines from the first changed one
+    /// are done again, so typing never leaves the lines on screen uncolored.
     pub fn prepare(&mut self, id: usize, buffer: &Buffer, end: usize) -> bool {
         let name = buffer.name();
+        if let Some(cache) = self
+            .cache
+            .get_mut(&id)
+            .filter(|c| c.revision != buffer.revision && c.name == name)
+        {
+            let known = cache.hashes.len().min(buffer.lines());
+            let first = (0..known)
+                .find(|&row| line_hash(buffer.text.line(row)) != cache.hashes[row])
+                .unwrap_or(known);
+            if first < cache.starts.len() {
+                let (parse, state) = cache.starts[first].clone();
+                cache.parse = parse;
+                cache.state = state;
+            }
+            cache.lines.truncate(first);
+            cache.hashes.truncate(first);
+            cache.starts.truncate(first);
+            cache.revision = buffer.revision;
+        }
         let reset = self
             .cache
             .get(&id)
@@ -111,6 +148,8 @@ impl Syntax {
                     parse: ParseState::new(syntax),
                     state: HighlightState::new(&highlighter, ScopeStack::new()),
                     lines: Vec::new(),
+                    starts: Vec::new(),
+                    hashes: Vec::new(),
                 },
             );
         }
@@ -119,7 +158,12 @@ impl Syntax {
         let target = end.min(buffer.lines());
         let stop = target.min(cache.lines.len() + 512);
         for row in cache.lines.len()..stop {
-            let line = buffer.text.line(row).to_string();
+            let slice = buffer.text.line(row);
+            cache
+                .starts
+                .push((cache.parse.clone(), cache.state.clone()));
+            cache.hashes.push(line_hash(slice));
+            let line = slice.to_string();
             // Bound regex work on minified/generated lines.
             if line.len() > 16_384 {
                 cache.lines.push(Vec::new());
@@ -148,6 +192,57 @@ fn syntax_color(value: &str) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_edit_highlights_again_from_the_changed_line_only() {
+        let palette = config::load_theme_from("visual-studio-dark", None).unwrap();
+        let mut syntax = Syntax::new(&palette);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.py");
+        let body: String = (0..2000)
+            .map(|n| format!("value_{n} = {n}  # note\n"))
+            .collect();
+        std::fs::write(&path, &body).unwrap();
+        let mut buffer = Buffer::open(&path).unwrap();
+        let id = 0;
+        // The first time, it works its way down to line 1900 a bounded step at a time.
+        let mut calls = 0;
+        while syntax.prepare(id, &buffer, 1950) {
+            calls += 1;
+        }
+        assert!(calls >= 3);
+        let comment = |syntax: &Syntax, row: usize| {
+            let line = &syntax.cache[&id].lines[row];
+            line.iter()
+                .find(|(_, t)| t.contains("note"))
+                .unwrap()
+                .0
+                .foreground
+        };
+        let before = comment(&syntax, 1900);
+        // Typing at line 1900: one call covers the screen again.
+        buffer.row = 1900;
+        buffer.col = 0;
+        buffer.insert("x");
+        assert!(!syntax.prepare(id, &buffer, 1950), "done in one step");
+        assert_eq!(syntax.cache[&id].lines.len(), 1950);
+        assert_eq!(comment(&syntax, 1900), before);
+        // An edit that changes what follows: a docstring opened at line 10 swallows
+        // the lines below whole; closing it again splits them back into code.
+        let pieces = |syntax: &Syntax, row: usize| syntax.cache[&id].lines[row].len();
+        let code = pieces(&syntax, 30);
+        assert!(code > 1);
+        buffer.row = 10;
+        buffer.col = 0;
+        buffer.insert("\"\"\"");
+        while syntax.prepare(id, &buffer, 40) {}
+        assert_eq!(pieces(&syntax, 30), 1, "all docstring");
+        buffer.backspace();
+        buffer.backspace();
+        buffer.backspace();
+        while syntax.prepare(id, &buffer, 40) {}
+        assert_eq!(pieces(&syntax, 30), code);
+        assert_eq!(comment(&syntax, 30), before);
+    }
     #[test]
     fn all_required_languages_are_bundled() {
         let syntax = Syntax::new(&config::Theme::default());

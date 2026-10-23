@@ -1318,13 +1318,11 @@ fn editor(
                 }
             }
         } else {
-            spans.push(Span::raw(clip(
-                &raw,
-                &mut column,
-                buffer.hscroll,
-                width as usize,
-                tab_width,
-            )));
+            // Not highlighted (yet): the theme's text color, not the terminal's.
+            spans.push(Span::styled(
+                clip(&raw, &mut column, buffer.hscroll, width as usize, tab_width),
+                Style::default().fg(color(&theme.foreground)),
+            ));
         }
         frame.render_widget(
             Paragraph::new(Line::from(spans)),

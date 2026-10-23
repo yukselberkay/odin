@@ -328,6 +328,8 @@ pub struct App {
     /// Ctrl-b y: the mouse is handed back to the terminal (select, ⌘C) with the
     /// layout unchanged, until Ctrl-b y again.
     pub mouse_released: bool,
+    /// Resize mode (Ctrl-b r): arrows resize the focused pane until Enter or Esc.
+    pub resizing: bool,
 }
 
 impl App {
@@ -409,6 +411,7 @@ impl App {
             search_lines: Vec::new(),
             asked: None,
             mouse_released: false,
+            resizing: false,
             copy_view: None,
         };
         if let Some(path) = initial {
@@ -1643,6 +1646,9 @@ impl App {
         if self.dock_list.is_some() {
             return self.dock_list_key(key);
         }
+        if self.resizing {
+            return self.resize_key(key);
+        }
         if self.hover.take().is_some() && key.code == KeyCode::Esc {
             return Ok(());
         }
@@ -2270,6 +2276,11 @@ impl App {
             KeyCode::Char(' ') => self.flip_split(),
             KeyCode::Char('d') => self.dock(),
             KeyCode::Char('y') => self.toggle_mouse(),
+            KeyCode::Char('r') => {
+                self.resizing = true;
+                self.zoom = false;
+                self.notice("Resize: ← → ↑ ↓ or h j k l · Enter or Esc when done");
+            }
             KeyCode::Char('D') => self.open_dock_list(),
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -2530,6 +2541,34 @@ impl App {
         }
         self.sidebar_focus = false;
         self.notice("Pane moved · Ctrl-b Shift+arrows move it on · Ctrl-b Space flips");
+    }
+    /// Resize mode (Ctrl-b r): each arrow moves the focused pane's nearest split on
+    /// that axis by 5%, without Ctrl-b again; it works where the OS keeps
+    /// Ctrl+arrows for itself (macOS switches desktops with them). Any other key
+    /// ends it and does its usual job.
+    fn resize_key(&mut self, key: KeyEvent) -> Result<()> {
+        let (axis, delta) = match key.code {
+            KeyCode::Left | KeyCode::Char('h') => (Axis::Horizontal, -5),
+            KeyCode::Right | KeyCode::Char('l') => (Axis::Horizontal, 5),
+            KeyCode::Up | KeyCode::Char('k') => (Axis::Vertical, -5),
+            KeyCode::Down | KeyCode::Char('j') => (Axis::Vertical, 5),
+            KeyCode::Enter | KeyCode::Esc | KeyCode::Char('r') | KeyCode::Char('q') => {
+                self.resizing = false;
+                self.notice("Resized");
+                return Ok(());
+            }
+            _ => {
+                self.resizing = false;
+                return self.key(key);
+            }
+        };
+        if !self.tiles.resize(self.focused, axis, delta) {
+            self.notice(match axis {
+                Axis::Horizontal => "No side-by-side split here · ↑ ↓ resize stacked ones",
+                Axis::Vertical => "No stacked split here · ← → resize side-by-side ones",
+            });
+        }
+        Ok(())
     }
     /// Ctrl-b Space: turn the focused pane's split between side by side and stacked.
     fn flip_split(&mut self) {
@@ -5206,6 +5245,35 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         app.config.mouse = false;
         toggle(&mut app);
         assert!(app.message.contains("mouse = false"));
+    }
+    #[test]
+    fn resize_mode_resizes_with_plain_arrows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.split_editor(Axis::Horizontal).unwrap();
+        let percent = |app: &App| match &app.tiles {
+            Tile::Split { percent, .. } => *percent,
+            Tile::Leaf(_) => unreachable!(),
+        };
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
+        assert!(app.resizing);
+        assert!(screen(&mut app, 100, 20).join("\n").contains("RESIZE"));
+        press(&mut app, KeyCode::Right, KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char('l'), KeyModifiers::NONE);
+        assert_eq!(percent(&app), 60);
+        press(&mut app, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(percent(&app), 55);
+        press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+        assert!(app.message.contains("No stacked split"));
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(!app.resizing);
+        // Any other key ends it and does its usual job.
+        app.command("noh").unwrap();
+        press(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+        press(&mut app, KeyCode::Char('r'), KeyModifiers::NONE);
+        press(&mut app, KeyCode::Char(':'), KeyModifiers::NONE);
+        assert!(!app.resizing && app.input.is_some());
     }
     #[test]
     fn a_maximized_pane_says_other_panes_are_hidden() {

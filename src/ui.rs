@@ -2208,6 +2208,8 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         "FIND"
     } else if app.dock_list.is_some() {
         "DOCK"
+    } else if app.resizing {
+        "RESIZE"
     } else if app.help && app.help_focus {
         "GUIDE"
     } else if app.sidebar_focus {
@@ -2283,7 +2285,9 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         let x = (value.chars().count() as u16).min(area.width.saturating_sub(1));
         frame.set_cursor_position((area.x + x, area.y + 1));
     } else {
-        let hints = if app.dock_list.is_some() {
+        let hints = if app.resizing {
+            " ← → ↑ ↓ or h j k l resize the focused pane   Enter or Esc done"
+        } else if app.dock_list.is_some() {
             " ↑ ↓ choose   Enter or 1-9 bring back   x close the pane   Esc"
         } else if let Some(find) = &app.find {
             if find.replacing {
@@ -2294,7 +2298,7 @@ fn footer(frame: &mut Frame, app: &App, area: Rect) {
         } else if app.copy.is_some() {
             " hjkl/arrows move   w b words   0 $ line   g G top/end   PgUp PgDn   v V select   y copy   / ? search   n N next   q leave"
         } else if app.prefix {
-            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  y mouse  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
+            " % split  \" stack  c shell  a/A AI beside/below  m preview  t themes  arrows focus  ⇧arrows move  space flip  d dock  D docked  y mouse  r resize  z zoom  Z copy view  [ copy mode  +/-/0 text size  x close  ? help"
         } else if app.sidebar_focus && !app.git_focus && app.explorer_search.is_some() {
             " type to search names and text   ↑ ↓ preview   Enter open at the line   ^U clear   Esc back to the tree"
         } else if app.sidebar_focus && !app.git_focus {
@@ -2382,7 +2386,10 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ("WORKSPACE", "One prefix. Everything in view."),
         ("Ctrl-b % / \"", "Split side-by-side / top-and-bottom"),
         ("Ctrl-b arrows / h j k l", "Focus adjacent pane; o cycles"),
-        ("Ctrl-b Ctrl-arrows", "Resize a split"),
+        (
+            "Ctrl-b r, arrows",
+            "Resize the pane (Enter done); Ctrl-b Ctrl-arrows too",
+        ),
         (
             "Ctrl-b Shift-arrows / HJKL",
             "Move the pane: swap, or take that whole side",

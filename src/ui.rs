@@ -2502,7 +2502,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "Hover docs / go to definition / jump back",
         ),
         (
-            "Ctrl-Space / ]d [d / :format",
+            "Ctrl-Space or ^N / ]d [d / :format",
             "Complete (pops up by itself; Tab takes it) / problems / format",
         ),
         (

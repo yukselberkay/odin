@@ -647,7 +647,8 @@ insert mode.
 **Autocomplete:** after two letters of a word, suggestions pop up: the language
 server's (Rust, Go, Python, C/C++, when installed), or else the language's keywords
 and the words already in your open files of that language, most used first. They
-also pop up after `.`, and `Ctrl-Space` asks any time. Up/Down or `Ctrl-n`/`Ctrl-p`
+also pop up after `.`, and `Ctrl-Space` or `Ctrl-n` asks any time (macOS keeps
+Ctrl-Space for switching keyboard languages when you have more than one). Up/Down or `Ctrl-n`/`Ctrl-p`
 choose, **Tab** accepts, Escape closes the list, and typing keeps filtering it. Enter
 accepts a suggestion you picked with Up/Down (or one you asked for); otherwise it
 starts a new line, so a list that popped up never eats a newline.
@@ -768,7 +769,7 @@ the project root, and talks to it in the background. Install the server once:
 | Diagnostics | A `●` in the gutter, underlined code, and the message at the bottom of the pane when the cursor is on that line; `]d` / `[d` jump between them |
 | Hover | `K` shows types and docs in a popup; any key closes it |
 | Go to definition | `gd` opens the definition (even in another file); `Ctrl-o` jumps back |
-| Completion | Pops up after two letters or `.`; `Ctrl-Space` asks; keywords and words from your files without a server |
+| Completion | Pops up after two letters or `.`; `Ctrl-Space` or `Ctrl-n` asks; keywords and words from your files without a server |
 | Format | `:format` formats the file with the server's formatter (rustfmt, gofmt, clang-format…) |
 | Tidy on save | Go files are tidied every time you save, as in VS Code: [details below](#go-tidy-on-save) |
 | Status | The pane footer names the server and counts errors/warnings; `:lsp` lists every language; `:lsp restart` restarts them |

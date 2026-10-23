@@ -2708,7 +2708,9 @@ impl App {
                 _ => {}
             }
         }
-        if ctrl && matches!(key.code, KeyCode::Char(' ') | KeyCode::Char('@')) {
+        // Ctrl-Space, or Ctrl-n as in Vim: macOS (and Linux input methods like fcitx)
+        // can take Ctrl-Space for switching keyboard languages.
+        if ctrl && matches!(key.code, KeyCode::Char(' ' | '@' | 'n')) {
             let ready = self.buffer_id().is_some_and(|id| self.lsp.ready(id));
             if ready {
                 return self.lsp_request(lsp::Kind::Completion);
@@ -4524,11 +4526,15 @@ mod tests {
         press(&mut app, KeyCode::Down, KeyModifiers::NONE);
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert!(app.buffers[id].text.to_string().ends_with("\nfunction"));
-        // autocomplete = false: nothing pops up, Ctrl-Space still asks.
+        // autocomplete = false: nothing pops up, Ctrl-Space (or Ctrl-n) still asks.
         app.config.autocomplete = false;
         keys(&mut app, " tot");
         assert!(app.menu.is_none());
         press(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+        assert_eq!(labels(&app), vec!["totalCount"]);
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.menu.is_none());
+        press(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
         assert_eq!(labels(&app), vec!["totalCount"]);
     }
     #[test]

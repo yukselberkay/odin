@@ -267,13 +267,14 @@ fn show_keys() -> Result<()> {
             }
             let mut name = String::new();
             for (flag, label) in [
-                (KeyModifiers::CONTROL, "Ctrl+"),
-                (KeyModifiers::ALT, "Alt/Option+"),
-                (KeyModifiers::SUPER, "Cmd+"),
-                (KeyModifiers::SHIFT, "Shift+"),
+                (KeyModifiers::CONTROL, "Ctrl"),
+                (KeyModifiers::ALT, platform::ALT_KEY),
+                (KeyModifiers::SUPER, platform::SUPER_KEY),
+                (KeyModifiers::SHIFT, "Shift"),
             ] {
                 if key.modifiers.contains(flag) {
                     name.push_str(label);
+                    name.push('+');
                 }
             }
             name.push_str(&match key.code {

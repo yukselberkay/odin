@@ -1423,9 +1423,12 @@ impl App {
         }
         self.mouse_released = !self.mouse_released;
         self.notice(if self.mouse_released {
-            "Mouse released: drag to select, ⌘C / Ctrl-Shift-C copies · Ctrl-b y gives the wheel back"
+            format!(
+                "Mouse released: drag to select, {} copies · Ctrl-b y gives the wheel back",
+                crate::platform::COPY_KEY
+            )
         } else {
-            "Mouse back: wheel scrolls, click focuses · Ctrl-b y releases it again"
+            "Mouse back: wheel scrolls, click focuses · Ctrl-b y releases it again".into()
         });
     }
     /// The wheel scrolls what's under the pointer; a click focuses it, puts the
@@ -5185,6 +5188,8 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert!(!app.mouse_wanted(), "released for the terminal's selection");
         let shown = screen(&mut app, 120, 20).join("\n");
         assert!(shown.contains("MOUSE RELEASED"), "{shown}");
+        // The copy key this OS's terminals use: ⌘C on a Mac, Ctrl-Shift-C elsewhere.
+        assert!(shown.contains(crate::platform::COPY_KEY), "{shown}");
         assert!(shown.contains("EXPLORER"), "the layout stays as it is");
         toggle(&mut app);
         assert!(app.mouse_wanted());

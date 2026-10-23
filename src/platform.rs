@@ -1,6 +1,35 @@
 //! The few places Linux, macOS and Windows differ: finding executables, the
-//! default shell, and where user configuration lives.
+//! default shell, where user configuration lives, and what keys are called.
 use std::path::{Path, PathBuf};
+
+const MAC: bool = cfg!(target_os = "macos");
+
+/// The terminal's own copy shortcut, for hints: ⌘C on a Mac, Ctrl-Shift-C on Linux
+/// and in Windows Terminal.
+pub const COPY_KEY: &str = if MAC { "⌘C" } else { "Ctrl-Shift-C" };
+/// The Alt key as the keyboard labels it.
+pub const ALT_KEY: &str = if MAC { "Option" } else { "Alt" };
+/// The logo key as the keyboard labels it.
+pub const SUPER_KEY: &str = if MAC {
+    "Cmd"
+} else if cfg!(windows) {
+    "Win"
+} else {
+    "Super"
+};
+/// The guide's line for moving by word and line: Option and Cmd arrows on a Mac,
+/// Ctrl arrows and Home/End elsewhere.
+pub const WORD_KEYS: (&str, &str) = if MAC {
+    (
+        "Option-←/→ · Option-⌫ · Cmd-arrows",
+        "Word left/right (⇧ selects) · delete word · line/file ends",
+    )
+} else {
+    (
+        "Ctrl-←/→ · Alt-⌫ · Home/End",
+        "Word left/right (⇧ selects) · delete word · line ends",
+    )
+};
 
 /// Full path of `program` if it can be run: a path that exists, or a name found
 /// on PATH. On Windows the PATHEXT extensions (`.exe`, `.cmd`, …) are tried too,

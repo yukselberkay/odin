@@ -100,14 +100,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Ctrl-b y: a reminder that the mouse is the terminal's until it's taken back.
     if !bare && app.mouse_released {
         let badges = [
-            " ⇱ MOUSE RELEASED · select, ⌘C · Ctrl-b y takes it back ",
-            " ⇱ MOUSE RELEASED · Ctrl-b y ",
-            " ⇱ MOUSE ",
+            format!(
+                " ⇱ MOUSE RELEASED · select, {} · Ctrl-b y takes it back ",
+                crate::platform::COPY_KEY
+            ),
+            " ⇱ MOUSE RELEASED · Ctrl-b y ".into(),
+            " ⇱ MOUSE ".into(),
         ];
         if let Some(badge) = badges.iter().find(|b| x + b.chars().count() as u16 <= end) {
             let width = badge.chars().count() as u16;
             frame.render_widget(
-                Paragraph::new(*badge).style(
+                Paragraph::new(badge.as_str()).style(
                     Style::default()
                         .fg(color(&theme.background))
                         .bg(color(&theme.warning))
@@ -2421,7 +2424,11 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
         ),
         (
             "Ctrl-b y",
-            "Mouse to the terminal: select + ⌘C; again for the wheel",
+            if cfg!(target_os = "macos") {
+                "Mouse to the terminal: select + ⌘C; again for the wheel"
+            } else {
+                "Mouse to the terminal: select + Ctrl-Shift-C; again for the wheel"
+            },
         ),
         (
             "Mouse wheel / click",
@@ -2474,10 +2481,7 @@ fn help(frame: &mut Frame, app: &mut App, rect: Rect) {
             "v / V / Shift-arrows",
             "Select characters / lines; y copy, d cut, p replace",
         ),
-        (
-            "Option-←/→ · Option-⌫ · Cmd-arrows",
-            "Word left/right (⇧ selects) · delete word · line/file ends",
-        ),
+        crate::platform::WORD_KEYS,
         (
             "Ctrl-c / Ctrl-x / Ctrl-v",
             "Copy / cut / paste (line if nothing selected)",

@@ -16,8 +16,8 @@ enum Sound {
     File(PathBuf),
 }
 
-/// `"default"`, `"off"`, `"bell"`, a macOS sound name (`"Glass"`, `"Hero"`…) or a
-/// path to a sound file.
+/// `"default"`, `"off"`, `"bell"`, a system sound by name (macOS `"Glass"`, `"Hero"`;
+/// Windows `"Windows Ding"`, `"chimes"`…) or a path to a sound file.
 fn sound(setting: &str) -> Sound {
     let setting = setting.trim();
     match setting {
@@ -30,29 +30,51 @@ fn sound(setting: &str) -> Sound {
                     .map_or_else(|| PathBuf::from(name), |d| d.home_dir().join(rest)),
                 None => PathBuf::from(name),
             };
-            let named = PathBuf::from(format!("/System/Library/Sounds/{name}.aiff"));
-            if path.is_file() {
-                Sound::File(path)
-            } else if cfg!(target_os = "macos") && named.is_file() {
-                Sound::File(named)
-            } else {
-                Sound::Bell
+            match system_sounds().map(|dir| dir.join(format!("{name}.{}", SYSTEM_EXT))) {
+                _ if path.is_file() => Sound::File(path),
+                Some(named) if named.is_file() => Sound::File(named),
+                _ => Sound::Bell,
             }
         }
     }
 }
 
+/// The format of the system's own sounds.
+const SYSTEM_EXT: &str = if cfg!(windows) { "wav" } else { "aiff" };
+
+/// Where the system keeps its named sounds: macOS's and Windows's.
+fn system_sounds() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some("/System/Library/Sounds".into())
+    } else if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        Some(PathBuf::from(root).join("Media"))
+    } else {
+        None
+    }
+}
+
 /// A short "done" chime the system already has.
 fn default_file() -> Option<PathBuf> {
-    let candidates: &[&str] = if cfg!(target_os = "macos") {
-        &["/System/Library/Sounds/Glass.aiff"]
+    let candidates: Vec<PathBuf> = if cfg!(target_os = "macos") {
+        vec!["/System/Library/Sounds/Glass.aiff".into()]
+    } else if cfg!(windows) {
+        let media = system_sounds()?;
+        [
+            "Windows Notify System Generic.wav",
+            "Windows Ding.wav",
+            "chimes.wav",
+        ]
+        .iter()
+        .map(|name| media.join(name))
+        .collect()
     } else {
-        &[
-            "/usr/share/sounds/freedesktop/stereo/complete.oga",
-            "/usr/share/sounds/freedesktop/stereo/message.oga",
+        vec![
+            "/usr/share/sounds/freedesktop/stereo/complete.oga".into(),
+            "/usr/share/sounds/freedesktop/stereo/message.oga".into(),
         ]
     };
-    candidates.iter().map(PathBuf::from).find(|p| p.is_file())
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 /// Players to try, in order, for a file.
@@ -64,6 +86,20 @@ fn players(file: &Path) -> Vec<Command> {
     };
     if cfg!(target_os = "macos") {
         vec![with("afplay", &[])]
+    } else if cfg!(windows) {
+        // Windows has no command-line player; PowerShell's SoundPlayer plays WAV.
+        // The path goes in an environment variable: -Command would split it at
+        // spaces ("Windows Notify System Generic.wav").
+        let mut command = Command::new("powershell");
+        command
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(New-Object Media.SoundPlayer $env:ODIN_SOUND).PlaySync()",
+            ])
+            .env("ODIN_SOUND", file);
+        vec![command]
     } else {
         vec![
             with("paplay", &[]),

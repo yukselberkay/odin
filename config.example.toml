@@ -38,9 +38,9 @@ ai_split = "right"
 # current at startup when an AI agent is installed, and when you launch one).
 ai_skill = true
 # A sound when an AI pane finishes a prompt (or stops to ask you something):
-# "default" (macOS Glass, the desktop's "complete" sound on Linux), "off", "bell"
-# (the terminal's bell), a macOS sound name ("Hero", "Ping"…) or a sound file.
-# :sound plays it.
+# "default" (macOS Glass, the desktop's "complete" sound on Linux, Windows' notify
+# sound), "off", "bell" (the terminal's bell), a system sound name (macOS "Hero",
+# "Ping"…; Windows "Windows Ding", "chimes"…) or a sound file. :sound plays it.
 ai_sound = "default"
 # Mouse wheel scrolls the pane (or explorer, guide) under the pointer; a click
 # focuses a pane, puts the editor cursor there, or opens an explorer entry. While

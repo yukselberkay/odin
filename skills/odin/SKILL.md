@@ -67,7 +67,7 @@ in the order the user presses them. Prefer showing over explaining.
 | Custom command | `[plugins.check] program = "cargo" args = ["check"]` → `:run check` opens it in a terminal pane. |
 | Hide the sidebar | `Ctrl-b s`; width: `sidebar_width = 34`. |
 | Relative line numbers | `:set rnu` (`:set nornu`); permanent: `relative_numbers = true`. |
-| Install / update Odin | `cargo install --path . --locked --force` from the source folder; Windows needs rustup (MSVC) and Git. |
+| Install / update Odin | One step, with everything it needs and `odin` put on PATH: **`scripts/install.sh`** (macOS, Linux; `curl -fsSL https://raw.githubusercontent.com/yukselberkay/odin/main/scripts/install.sh \| bash`) or **`scripts\install.ps1`** (Windows PowerShell; `irm …/scripts/install.ps1 \| iex`). By hand: `cargo install --path . --locked --force` from the source folder. |
 
 ## Config keys
 

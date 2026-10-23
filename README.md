@@ -55,7 +55,14 @@ It installs, skipping whatever is already there:
    when Homebrew is installed, otherwise the latest Nerd Fonts release into
    `~/Library/Fonts` or `~/.local/share/fonts` (`--no-font` skips it).
 5. **Odin**, built with `cargo install --locked` into `~/.cargo/bin/odin`.
-6. **The [Odin skill](#ask-your-ai-agent-about-odin)** for AI agents, for every project
+6. **`odin` on your PATH**, so it runs by name. If your terminal can't find it yet, it
+   links it into a folder already on your PATH that you can write to
+   (`~/.local/bin`, `~/bin`, `/opt/homebrew/bin` or `/usr/local/bin`), so it works in
+   that terminal at once; without one, it adds `~/.cargo/bin` to your shell's startup
+   file (zsh, bash or fish; once, marked) for new terminals. Another `odin` already
+   first on PATH (the Odin programming language has one too) is reported, not
+   replaced.
+7. **The [Odin skill](#ask-your-ai-agent-about-odin)** for AI agents, for every project
    of your user (`--no-skill` skips it; a failure here only warns).
 
 Run it as yourself, not with `sudo`; it asks for `sudo` only for system packages.
@@ -106,6 +113,22 @@ git --version
 If Rust is already installed but too old, use `rustup update stable`.
 
 ### Windows
+
+On **Windows**, `scripts\install.ps1` does the same in PowerShell, using winget for
+the programs: Git, the Visual Studio C++ build tools (Rust's linker; a large
+download), Rust through rustup, rust-analyzer, JetBrains Mono Nerd Font (for your
+user, no administrator rights), Odin, the AI-agent skill, and `%USERPROFILE%\.cargo\bin`
+on your user PATH, so `odin` runs in that window at once and in every new one:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+# without a checkout:
+irm https://raw.githubusercontent.com/yukselberkay/odin/main/scripts/install.ps1 | iex
+```
+
+`-NoFont`, `-NoLsp` and `-NoSkill` skip those parts. Afterwards pick
+"JetBrainsMono Nerd Font Mono" in Windows Terminal (Settings → Profiles → Defaults →
+Appearance → Font face). By hand instead:
 
 1. Install Rust with [rustup-init.exe](https://rustup.rs/) and accept the default
    (MSVC) toolchain; when asked, let it install the Visual Studio C++ Build Tools.
@@ -1221,7 +1244,7 @@ Odin works the same on all three; where the systems differ, each gets its own wa
 | Text size `Ctrl-b + - 0` | Terminal.app, xterm, kitty; others: Cmd-+ / Cmd-- | xterm, kitty; others: Ctrl-+ / Ctrl-- | Windows Terminal: Ctrl-+ / Ctrl-- |
 | Terminal's copy key (shown in hints) | ⌘C | Ctrl-Shift-C | Ctrl-Shift-C |
 | AI skill for agents | linked | linked | copied (links need extra rights) |
-| One-step install | `scripts/install.sh` | `scripts/install.sh` | [Windows](#windows) section |
+| One-step install, `odin` on PATH | `scripts/install.sh` | `scripts/install.sh` | `scripts\install.ps1` |
 
 Some keys never reach Odin because the system or the terminal keeps them. Each has
 another way in:

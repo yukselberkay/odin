@@ -5320,6 +5320,43 @@ env = { OPENAI_BASE_URL = "http://localhost:8080/v1" }
         assert!(!app.resizing && app.input.is_some());
     }
     #[test]
+    fn the_active_pane_carries_the_odin_mark() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().into(), None, false).unwrap();
+        app.split_editor(Axis::Horizontal).unwrap();
+        let marks = |app: &mut App| -> Vec<String> {
+            screen(app, 120, 20)
+                .iter()
+                .flat_map(|row| {
+                    row.match_indices("◉ ")
+                        .map(|(at, _)| row[at..].chars().take(12).collect::<String>())
+                })
+                .filter(|s| !s.starts_with("◉ ODIN"))
+                .collect()
+        };
+        let focused = app.focused + 1;
+        let shown = marks(&mut app);
+        assert_eq!(shown.len(), 1, "only the focused pane: {shown:?}");
+        assert!(shown[0].starts_with(&format!("◉ {focused} ")), "{shown:?}");
+        // In the accent color.
+        let backend = ratatui::backend::TestBackend::new(120, 20);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let accent = crate::config::color(&app.theme.accent);
+        let dot = (0..20)
+            .flat_map(|y| (0..120).map(move |x| (x, y)))
+            .filter(|&(x, y)| y > 0 && buffer[(x, y)].symbol() == "◉")
+            .collect::<Vec<_>>();
+        assert_eq!(dot.len(), 1);
+        assert_eq!(buffer[dot[0]].fg, accent);
+        // Focus moves to the explorer: so does the mark.
+        press(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        let shown = marks(&mut app);
+        assert_eq!(shown.len(), 1);
+        assert!(shown[0].starts_with("◉ EXPLORER"), "{shown:?}");
+    }
+    #[test]
     fn a_maximized_pane_says_other_panes_are_hidden() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().into(), None, false).unwrap();

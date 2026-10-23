@@ -348,7 +348,7 @@ Shift on many keyboard layouts. On macOS, **Ctrl means Control, not Command**.
 | `Ctrl-s` | Save editor buffer |
 | `Ctrl-q` | Quit, refusing unsaved buffers |
 | `Ctrl-b %` / `Ctrl-b "` | Side-by-side / stacked editor split |
-| `Ctrl-b arrows` or `Ctrl-b h/j/k/l` | Move between panes |
+| `Ctrl-b arrows` or `Ctrl-b h/j/k/l` | Move between panes; the one taking your keys has Odin's `◉` before its title |
 | `Ctrl-b Ctrl-arrows` | Resize the closest split on that axis |
 | `Ctrl-b r` | Resize mode: arrows or `h j k l` resize the focused pane, as often as you like, Enter or Escape when done (macOS keeps Ctrl+arrows for switching desktops, so use this there) |
 | `Ctrl-b Shift-arrows` or `Ctrl-b H/J/K/L` | Move the pane: it trades places with the pane on that side, or, at the edge already, takes that whole side of the window (`:move right`) |

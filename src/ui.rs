@@ -29,6 +29,24 @@ fn panel<'a>(title: impl Into<Line<'a>>, theme: &Theme, active: bool) -> Block<'
         .title(title)
         .title_style(Style::default().fg(color(if active { &theme.accent } else { &theme.muted })))
 }
+/// A pane's (or the explorer's, the Git section's) frame. The one taking your keys
+/// carries Odin's ◉ in the accent color before its title.
+fn pane_panel<'a>(title: &str, theme: &Theme, active: bool) -> Block<'a> {
+    let title = if active {
+        Line::from(vec![
+            Span::styled(
+                " ◉",
+                Style::default()
+                    .fg(color(&theme.accent))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(title.to_string()),
+        ])
+    } else {
+        Line::from(title.to_string())
+    };
+    panel(title, theme, active)
+}
 fn text(frame: &mut Frame, area: Rect, value: impl Into<String>, fg: Color) {
     if area.height > 0 && area.width > 0 {
         frame.render_widget(
@@ -236,7 +254,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let inner = if bare {
             rect
         } else {
-            let block = panel(title.clone(), &theme, active);
+            let block = pane_panel(&title, &theme, active);
             let inner = block.inner(rect);
             frame.render_widget(block, rect);
             // Maximized (Ctrl-b z): say so, and that other panes are still running.
@@ -253,7 +271,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     ),
                     format!(" ⛶ +{hidden} "),
                 ];
-                let room = rect.width.saturating_sub(title.chars().count() as u16 + 4);
+                let room = rect
+                    .width
+                    .saturating_sub(title.chars().count() as u16 + 4 + if active { 2 } else { 0 });
                 if let Some(badge) = badge.iter().find(|b| b.chars().count() as u16 <= room) {
                     let width = badge.chars().count() as u16;
                     frame.render_widget(
@@ -808,7 +828,7 @@ fn explorer_hint(width: usize) -> &'static str {
 /// The sidebar's Git section: branch, changed files, graph.
 fn git_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = &app.theme;
-    let block = panel(" GIT / TREE ", theme, app.sidebar_focus && app.git_focus);
+    let block = pane_panel(" GIT / TREE ", theme, app.sidebar_focus && app.git_focus);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let mut lines = Vec::new();
@@ -885,7 +905,7 @@ fn git_section(frame: &mut Frame, app: &mut App, area: Rect) {
 fn explorer_search(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = app.theme.clone();
     let focused = app.sidebar_focus && !app.git_focus;
-    let block = panel(" SEARCH ", &theme, focused);
+    let block = pane_panel(" SEARCH ", &theme, focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let Some(search) = app.explorer_search.as_mut() else {
@@ -1050,7 +1070,7 @@ fn sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let theme = &app.theme;
-    let block = panel(" EXPLORER ", theme, app.sidebar_focus && !app.git_focus);
+    let block = pane_panel(" EXPLORER ", theme, app.sidebar_focus && !app.git_focus);
     let inner = block.inner(regions[0]);
     frame.render_widget(block, regions[0]);
     let name = app.root.file_name().unwrap_or_default().to_string_lossy();

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build and install Odin with everything it needs on this machine (macOS or Linux):
 # a C compiler and linker, Git, curl, Rust (via rustup), rust-analyzer,
-# JetBrains Mono Nerd Font, Odin itself (~/.cargo/bin/odin), and the Odin skill
-# that teaches AI agents how to use Odin.
+# JetBrains Mono Nerd Font, Odin itself (~/.cargo/bin/odin, made runnable by name
+# from PATH), and the Odin skill that teaches AI agents how to use Odin.
+# Windows: scripts/install.ps1.
 #
 # Run it from a checkout (scripts/install.sh) or piped from GitHub
 # (curl -fsSL …/scripts/install.sh | bash); outside a checkout it clones Odin
@@ -61,8 +62,14 @@ fi
 os="$(uname -s)"
 case "$os" in
     Darwin | Linux) ;;
-    *) die "This script supports macOS and Linux; on Windows follow the README's Windows section." ;;
+    *) die "This script supports macOS and Linux; on Windows run scripts/install.ps1 in PowerShell." ;;
 esac
+
+# Where `cargo install` puts programs.
+cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+# Your terminal's PATH, before this script adds Cargo to its own: what `odin` has
+# to be found on.
+user_path="$PATH"
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -234,13 +241,102 @@ install_odin() {
     src="$(source_dir)"
     note "building from $src (the first build takes a few minutes)"
     cargo install --path "$src" --locked --force
-    local bin="$HOME/.cargo/bin/odin"
+    local bin="$cargo_bin/odin"
     [ -x "$bin" ] || die "cargo finished but $bin is missing"
     ok "$("$bin" --version) at $bin"
-    case ":$PATH:" in
-        *":$HOME/.cargo/bin:"*) ;;
-        *) note "~/.cargo/bin is not on PATH in this shell; open a new terminal, or run: . \"\$HOME/.cargo/env\"" ;;
+}
+
+# The real file behind a path (symlinks followed), for comparing two `odin`s.
+real_path() {
+    local path="$1" link
+    while link="$(readlink "$path")"; do
+        case "$link" in
+            /*) path="$link" ;;
+            *) path="$(dirname "$path")/$link" ;;
+        esac
+    done
+    printf '%s/%s\n' "$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" "$(basename "$path")"
+}
+
+# Make `odin` runnable by name: right away in this terminal when a folder already on
+# PATH can take a link to it, and in every new terminal either way.
+put_on_path() {
+    step "odin on your PATH"
+    local bin="$cargo_bin/odin" found dir
+    found="$(PATH="$user_path" command -v odin 2>/dev/null || true)"
+    if [ -n "$found" ] && [ "$(real_path "$found")" = "$(real_path "$bin")" ]; then
+        ok "ready: odin runs from $found"
+        return
+    fi
+    if [ -n "$found" ]; then
+        note "another odin comes first on PATH: $found (perhaps the Odin programming language)"
+        note "run this Odin as $bin, or put $cargo_bin before that folder in PATH"
+        return
+    fi
+    # A folder already on PATH that we may write to without sudo.
+    for dir in "$HOME/.local/bin" "$HOME/bin" /opt/homebrew/bin /usr/local/bin; do
+        case ":$user_path:" in
+            *":$dir:"*) ;;
+            *) continue ;;
+        esac
+        [ -d "$dir" ] && [ -w "$dir" ] || continue
+        # Never replace a file that isn't our own link.
+        if [ -e "$dir/odin" ] && [ ! -L "$dir/odin" ]; then
+            continue
+        fi
+        ln -sf "$bin" "$dir/odin"
+        ok "linked $dir/odin → $bin; odin runs in this terminal now"
+        return
+    done
+    add_to_profile
+}
+
+# Put Cargo's bin folder on PATH for new terminals, in the startup file of your
+# shell; once, marked so a second run doesn't add it again.
+add_to_profile() {
+    local marker="# Added by Odin's installer: programs installed with cargo"
+    local line="export PATH=\"$cargo_bin:\$PATH\""
+    local shell_name files=() file candidate
+    shell_name="$(basename "${SHELL:-sh}")"
+    case "$shell_name" in
+        zsh) files=("${ZDOTDIR:-$HOME}/.zshrc") ;;
+        bash)
+            # Linux terminals read ~/.bashrc. macOS ones start login shells, which read
+            # only the first of these that exists; a new ~/.bash_profile would hide
+            # an existing ~/.profile.
+            if [ "$os" = Darwin ]; then
+                file="$HOME/.bash_profile"
+                for candidate in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+                    if [ -f "$candidate" ]; then
+                        file="$candidate"
+                        break
+                    fi
+                done
+                files=("$file")
+            else
+                files=("$HOME/.bashrc")
+            fi
+            ;;
+        fish)
+            file="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/odin.fish"
+            mkdir -p "$(dirname "$file")"
+            printf '%s\nfish_add_path -g %s\n' "$marker" "$cargo_bin" >"$file"
+            ok "added $cargo_bin to fish's PATH ($file)"
+            note "open a new terminal to run odin by name (or run $bin now)"
+            return
+            ;;
+        *) files=("$HOME/.profile") ;;
     esac
+    for file in "${files[@]}"; do
+        # Ours from an earlier run, or rustup's own line.
+        if grep -qsF -e "$marker" -e ".cargo/env" -e "$cargo_bin" "$file"; then
+            ok "$file already adds $cargo_bin to PATH"
+        else
+            printf '\n%s\n%s\n' "$marker" "$line" >>"$file"
+            ok "added $cargo_bin to PATH in $file"
+        fi
+    done
+    note "open a new terminal to run odin by name, or run now: export PATH=\"$cargo_bin:\$PATH\""
 }
 
 # Odin's docs as an Agent Skills skill, so Claude Code, Codex, Gemini CLI and others
@@ -249,7 +345,7 @@ install_odin() {
 install_skill() {
     step "Odin skill for AI agents"
     local log="$scratch/skill.log"
-    if "$HOME/.cargo/bin/odin" --install-skill >"$log" 2>&1; then
+    if "$cargo_bin/odin" --install-skill >"$log" 2>&1; then
         ok "installed for this user (every project): $(grep -c '/odin$' "$log") place(s)"
     else
         note "skipped ($(tail -n 1 "$log")); run odin --install-skill later"
@@ -279,6 +375,7 @@ if [ "$with_font" -eq 1 ]; then
     install_font
 fi
 install_odin
+put_on_path
 if [ "$with_skill" -eq 1 ]; then
     install_skill
 fi

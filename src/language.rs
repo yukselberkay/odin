@@ -781,6 +781,31 @@ pub fn type_char(b: &mut Buffer, rules: &Rules, c: char, typing: Typing) {
         b.set_index(i + 1);
         return;
     }
+    // Strings and comments that run to a closing mark close as you open them, so the
+    // rest of the file doesn't turn into string or comment color while you write:
+    // Python's third quote makes """|""", and /* makes /*| */.
+    if typing.auto_pairs && next.is_none_or(char::is_whitespace) {
+        let back = |n: usize| (i >= n).then(|| b.text.char(i - n));
+        if rules.lang == Lang::Python
+            && matches!(c, '"' | '\'')
+            && back(1) == Some(c)
+            && back(2) == Some(c)
+            && back(3) != Some(c)
+        {
+            b.insert(&c.to_string().repeat(4));
+            b.set_index(b.index() - 3);
+            return;
+        }
+        let block_comments = matches!(
+            rules.lang,
+            Lang::C | Lang::Rust | Lang::Go | Lang::Js | Lang::Brace
+        );
+        if block_comments && c == '*' && prev == Some('/') {
+            b.insert("* */");
+            b.set_index(b.index() - 3);
+            return;
+        }
+    }
     // A closing bracket on a blank line goes back under its opener.
     if typing.smart_indent && matches!(c, ')' | ']' | '}') {
         let here = line(b);
@@ -1029,6 +1054,32 @@ mod tests {
         let mut b = buffer("a.js", "");
         typed(&mut b, "call(\u{8}x");
         assert_eq!(b.text.to_string(), "callx");
+    }
+
+    #[test]
+    fn docstrings_and_block_comments_close_as_they_open() {
+        let mut b = buffer("a.py", "");
+        typed(&mut b, "\"\"\"Docs.");
+        assert_eq!(b.text.to_string(), "\"\"\"Docs.\"\"\"");
+        // Typing the closing quotes steps over them.
+        typed(&mut b, "\"\"\"\n");
+        assert_eq!(b.text.to_string(), "\"\"\"Docs.\"\"\"\n");
+        let mut b = buffer("a.py", "");
+        typed(&mut b, "x = ''");
+        assert_eq!(
+            b.text.to_string(),
+            "x = ''",
+            "an empty string stays two quotes"
+        );
+        let mut b = buffer("a.c", "");
+        typed(&mut b, "/* note");
+        assert_eq!(b.text.to_string(), "/* note */");
+        let mut b = buffer("a.rs", "");
+        typed(&mut b, "/** Docs");
+        assert_eq!(b.text.to_string(), "/** Docs */");
+        let mut b = buffer("a.py", "");
+        typed(&mut b, "x = 2 * 3 / 4");
+        assert_eq!(b.text.to_string(), "x = 2 * 3 / 4");
     }
 
     #[test]

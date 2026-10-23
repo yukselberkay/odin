@@ -587,7 +587,9 @@ Typing follows the language of the file, like VS Code:
   the next character is a space, a closer or the line end, never right after a letter
   (`don't`; Python's `f"` and `r'` still close). Typing the closer steps over it,
   Backspace in an empty pair removes both, and typing an opener over a Shift-selection
-  wraps it.
+  wraps it. Python's `"""` and `/*` in C-like languages close as you open them
+  (`"""|"""`, `/*| */`), so the rest of the file doesn't turn into string or comment
+  color while you write.
 - The indentation unit comes from the file (tabs, or its most common step), else the
   language (tabs for Go, 4 spaces for Python, 2 for YAML), else `tab_width`. Tab goes to
   the next stop, Shift-Tab dedents the line, and Backspace in leading spaces removes a
